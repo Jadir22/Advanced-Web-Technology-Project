@@ -7,6 +7,7 @@ import {
   JoinColumn,
   Unique,
   Check,
+  Index,
   CreateDateColumn,
   UpdateDateColumn,
 } from "typeorm";
@@ -24,6 +25,8 @@ export enum MatchStatus {
   "lostReport",
   "foundReport",
 ])
+@Index("IDX_matches_lost_report_id", ["lostReport"])
+@Index("IDX_matches_found_report_id", ["foundReport"])
 @Check(
   "CHK_matches_distinct_reports",
   '"lost_report_id" <> "found_report_id"',
@@ -40,14 +43,20 @@ export class Match {
     nullable: false,
     onDelete: "CASCADE",
   })
-  @JoinColumn({ name: "lost_report_id" })
+  @JoinColumn({
+    name: "lost_report_id",
+    foreignKeyConstraintName: "FK_matches_lost_report",
+  })
   lostReport!: Report;
 
   @ManyToOne(() => Report, {
     nullable: false,
     onDelete: "CASCADE",
   })
-  @JoinColumn({ name: "found_report_id" })
+  @JoinColumn({
+    name: "found_report_id",
+    foreignKeyConstraintName: "FK_matches_found_report",
+  })
   foundReport!: Report;
 
   @Column({

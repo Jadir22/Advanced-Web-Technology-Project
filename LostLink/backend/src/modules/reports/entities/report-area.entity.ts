@@ -6,11 +6,13 @@ import {
   ManyToOne,
   JoinColumn,
   CreateDateColumn,
+  Index,
 } from "typeorm";
 
 import { Report } from "./report.entity";
 
 @Entity("report_areas")
+@Index("IDX_report_areas_report_id", ["report"])
 export class ReportArea {
   @PrimaryGeneratedColumn("uuid")
   id!: string;
@@ -19,7 +21,10 @@ export class ReportArea {
     nullable: false,
     onDelete: "CASCADE",
   })
-  @JoinColumn({ name: "report_id" })
+  @JoinColumn({
+    name: "report_id",
+    foreignKeyConstraintName: "FK_report_areas_report",
+  })
   report!: Report;
 
   @Column({

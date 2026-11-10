@@ -7,6 +7,7 @@ import {
   JoinColumn,
   CreateDateColumn,
   UpdateDateColumn,
+  Index,
 } from "typeorm";
 
 import { User } from "../../users/entities/user.entity";
@@ -24,6 +25,13 @@ export enum ReportStatus {
 }
 
 @Entity("reports")
+@Index("IDX_reports_user_id", ["user"])
+@Index("IDX_reports_match_candidates", [
+  "category",
+  "reportType",
+  "status",
+  "eventDate",
+])
 export class Report {
   @PrimaryGeneratedColumn("uuid")
   id!: string;
@@ -32,14 +40,20 @@ export class Report {
     nullable: false,
     onDelete: "RESTRICT",
   })
-  @JoinColumn({ name: "user_id" })
+  @JoinColumn({
+    name: "user_id",
+    foreignKeyConstraintName: "FK_reports_user",
+  })
   user!: User;
 
   @ManyToOne(() => Category, {
     nullable: false,
     onDelete: "RESTRICT",
   })
-  @JoinColumn({ name: "category_id" })
+  @JoinColumn({
+    name: "category_id",
+    foreignKeyConstraintName: "FK_reports_category",
+  })
   category!: Category;
 
   @Column({
