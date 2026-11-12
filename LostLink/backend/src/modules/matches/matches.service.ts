@@ -27,6 +27,12 @@ export interface ScoredCandidate extends MatchScoreResult {
   foundReportId: string;
 }
 
+export interface MatchPersistenceResult {
+  candidateCount: number;
+  writtenCount: number;
+  unchangedOrLockedCount: number;
+}
+
 @Injectable()
 export class MatchesService {
   constructor(
@@ -224,6 +230,67 @@ export class MatchesService {
       (a, b) =>
         b.finalScore - a.finalScore ||
         a.foundReportId.localeCompare(b.foundReportId),
+    );
+  }
+
+
+  // Phase 3: Persist scored candidates to the matches table
+  async persistScoredCandidates(
+    lostReportId: string,
+  ): Promise<MatchPersistenceResult> {
+    return this.reportRepository.manager.transaction(
+      async (manager) => {
+        // All reads and writes use the same transaction.
+        const scopedService = new MatchesService(
+          manager.getRepository(Report),
+        );
+
+        const candidates =
+          await scopedService.findScoredCandidates(
+            lostReportId,
+          );
+
+        let writtenCount = 0;
+
+        for (const candidate of candidates) {
+          const rows: Array<{ id: string }> =
+            await manager.query(
+              `
+              INSERT INTO public.matches (lost_report_id, found_report_id, match_score)
+              VALUES ($1, $2, $3)
+
+              ON CONFLICT ON CONSTRAINT
+                "UQ_matches_lost_found"
+
+              DO UPDATE SET
+                match_score = EXCLUDED.match_score,
+                updated_at = NOW()
+
+              WHERE matches.status = 'PENDING'
+                AND matches.match_score
+                    IS DISTINCT FROM EXCLUDED.match_score
+
+              RETURNING id
+              `,
+              [
+                lostReportId,
+                candidate.foundReportId,
+                candidate.finalScore,
+              ],
+            );
+
+          if (rows.length > 0) {
+            writtenCount++;
+          }
+        }
+
+        return {
+          candidateCount: candidates.length,
+          writtenCount,
+          unchangedOrLockedCount:
+            candidates.length - writtenCount,
+        };
+      },
     );
   }
 }
