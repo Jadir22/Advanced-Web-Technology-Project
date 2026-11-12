@@ -14,25 +14,61 @@
     "strict": true,
     "incremental": true,
     "skipLibCheck": true,
-    "typeRoots": ["./src/@types"],
+    "typeRoots": [
+      "./src/@types",
+      "./node_modules/@types"
+    ],
     "resolveJsonModule": true,
     "paths": {
-      "@/src/*": ["./src/*"],
-      "@/bot/*": ["./src/modules/bot/*"],
-      "@/types/*": ["./src/@types/*"],
-      "@/common/*": ["./src/common/*"],
-      "@/authentication/*": ["./src/authentication/*"],
-      "@/dauthentication/*": ["./src/authentication/*"],
-      "@/config/*": ["./src/config/*"],
-      "@/database/*": ["./src/database/*"],
-      "@/jobs/*": ["./src/jobs/*"],
-      "@/mails/*": ["./src/mails/*"],
-      "@/modules/*": ["./src/modules/*"],
-      "@/providers/*": ["./src/providers/*"],
-      "@/web3Modules/*": ["./src/web3Modules/*"],
-      "@/dweb3Modules/*": ["./src/web3Modules/*"]
+      "@/src/*": [
+        "./src/*"
+      ],
+      "@/bot/*": [
+        "./src/modules/bot/*"
+      ],
+      "@/types/*": [
+        "./src/@types/*"
+      ],
+      "@/common/*": [
+        "./src/common/*"
+      ],
+      "@/authentication/*": [
+        "./src/authentication/*"
+      ],
+      "@/dauthentication/*": [
+        "./src/authentication/*"
+      ],
+      "@/config/*": [
+        "./src/config/*"
+      ],
+      "@/database/*": [
+        "./src/database/*"
+      ],
+      "@/jobs/*": [
+        "./src/jobs/*"
+      ],
+      "@/mails/*": [
+        "./src/mails/*"
+      ],
+      "@/modules/*": [
+        "./src/modules/*"
+      ],
+      "@/providers/*": [
+        "./src/providers/*"
+      ],
+      "@/web3Modules/*": [
+        "./src/web3Modules/*"
+      ],
+      "@/dweb3Modules/*": [
+        "./src/web3Modules/*"
+      ]
     }
   },
-  "include": ["src"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
 }
