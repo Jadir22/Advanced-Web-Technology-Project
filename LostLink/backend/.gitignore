@@ -401,3 +401,6 @@ package-lock.json
 dist
 .webpack
 .serverless/**/*.zip
+
+# TypeScript incremental build cache
+*.tsbuildinfo
