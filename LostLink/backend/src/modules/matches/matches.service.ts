@@ -38,7 +38,7 @@ export class MatchesService {
   constructor(
     @InjectRepository(Report)
     private readonly reportRepository: Repository<Report>,
-  ) {}
+  ) { }
 
   // Phase 1: Candidate filtering
   async findCandidateIds(lostReportId: string): Promise<string[]> {
@@ -267,6 +267,8 @@ export class MatchesService {
                 updated_at = NOW()
 
               WHERE matches.status = 'PENDING'
+                AND matches.lost_confirmed = FALSE
+                AND matches.found_confirmed = FALSE
                 AND matches.match_score
                     IS DISTINCT FROM EXCLUDED.match_score
 
