@@ -4,7 +4,7 @@ import { NestExpressApplication } from "@nestjs/platform-express";
 import { AppModule } from "@/src/app.module";
 import * as dotenv from "dotenv";
 import { Request, Response, NextFunction } from "express";
-import cookieParser from "cookie-parser";
+import  cookieParser = require ('cookie-parser');
 import helmet from "helmet";
 import { join } from "path";
 
