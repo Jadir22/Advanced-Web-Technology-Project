@@ -23,14 +23,21 @@ import {
   MatchScoreResult,
 } from "./utils/match-score.util";
 
+import {
+  isEligibleMatchScore,
+} from "./utils/match-policy.util";
+
 export interface ScoredCandidate extends MatchScoreResult {
   foundReportId: string;
 }
 
 export interface MatchPersistenceResult {
   candidateCount: number;
+  eligibleCount: number;
+  excludedCount: number;
   writtenCount: number;
   unchangedOrLockedCount: number;
+  removedCount: number;
 }
 
 @Injectable()
@@ -38,10 +45,12 @@ export class MatchesService {
   constructor(
     @InjectRepository(Report)
     private readonly reportRepository: Repository<Report>,
-  ) { }
+  ) {}
 
   // Phase 1: Candidate filtering
-  async findCandidateIds(lostReportId: string): Promise<string[]> {
+  async findCandidateIds(
+    lostReportId: string,
+  ): Promise<string[]> {
     const lostReport = await this.reportRepository.findOne({
       where: { id: lostReportId },
       relations: {
@@ -93,11 +102,10 @@ export class MatchesService {
     return candidates.map((candidate) => candidate.id);
   }
 
-  // Phase 2B: Calculate scores from database records
+  // Phase 2: Database-integrated scoring
   async findScoredCandidates(
     lostReportId: string,
   ): Promise<ScoredCandidate[]> {
-    // Step 1: Reuse Phase 1 filtering
     const candidateIds =
       await this.findCandidateIds(lostReportId);
 
@@ -107,13 +115,10 @@ export class MatchesService {
 
     const reportIds = [lostReportId, ...candidateIds];
 
-    // Step 2: Load reports and event dates
     const reports = await this.reportRepository.findBy({
       id: In(reportIds),
     });
 
-    // Use the same EntityManager as the report repository.
-    // This also keeps integration tests inside their transaction.
     const areaRepository =
       this.reportRepository.manager.getRepository(ReportArea);
 
@@ -122,7 +127,6 @@ export class MatchesService {
         ReportAttribute,
       );
 
-    // Step 3: Load report areas
     const areas = await areaRepository.find({
       where: {
         report: {
@@ -134,7 +138,6 @@ export class MatchesService {
       },
     });
 
-    // Step 4: Load dynamic attributes
     const attributes = await attributeRepository.find({
       where: {
         report: {
@@ -147,7 +150,6 @@ export class MatchesService {
       },
     });
 
-    // Step 5: Organize records by report ID
     const reportMap = new Map(
       reports.map((report) => [report.id, report]),
     );
@@ -156,7 +158,6 @@ export class MatchesService {
 
     for (const area of areas) {
       const reportId = area.report.id;
-
       const current = areasByReport.get(reportId) ?? [];
 
       current.push({
@@ -192,7 +193,6 @@ export class MatchesService {
       throw new NotFoundException("Report not found");
     }
 
-    // Step 6: Calculate each candidate's score
     const results: ScoredCandidate[] = [];
 
     for (const foundReportId of candidateIds) {
@@ -225,7 +225,7 @@ export class MatchesService {
       });
     }
 
-    // Step 7: Highest score first
+    // Highest score first
     return results.sort(
       (a, b) =>
         b.finalScore - a.finalScore ||
@@ -233,14 +233,24 @@ export class MatchesService {
     );
   }
 
+  // Phase 4: Return only eligible candidates
+  async findEligibleCandidates(
+    lostReportId: string,
+  ): Promise<ScoredCandidate[]> {
+    const candidates =
+      await this.findScoredCandidates(lostReportId);
 
-  // Phase 3: Persist scored candidates to the matches table
+    return candidates.filter((candidate) =>
+      isEligibleMatchScore(candidate.finalScore),
+    );
+  }
+
+  // Phase 5: Persist scores and clean up stale matches
   async persistScoredCandidates(
     lostReportId: string,
   ): Promise<MatchPersistenceResult> {
     return this.reportRepository.manager.transaction(
       async (manager) => {
-        // All reads and writes use the same transaction.
         const scopedService = new MatchesService(
           manager.getRepository(Report),
         );
@@ -250,13 +260,24 @@ export class MatchesService {
             lostReportId,
           );
 
+        const eligibleCandidates = candidates.filter(
+          (candidate) =>
+            isEligibleMatchScore(candidate.finalScore),
+        );
+
         let writtenCount = 0;
 
-        for (const candidate of candidates) {
+        // Insert or update only eligible matches.
+        for (const candidate of eligibleCandidates) {
           const rows: Array<{ id: string }> =
             await manager.query(
               `
-              INSERT INTO public.matches (lost_report_id, found_report_id, match_score)
+              INSERT INTO public.matches
+                (
+                  lost_report_id,
+                  found_report_id,
+                  match_score
+                )
               VALUES ($1, $2, $3)
 
               ON CONFLICT ON CONSTRAINT
@@ -286,11 +307,57 @@ export class MatchesService {
           }
         }
 
+        const eligibleIds = eligibleCandidates.map(
+          (candidate) => candidate.foundReportId,
+        );
+
+        // Remove stale matches only if:
+        // - Match is PENDING
+        // - Neither owner has confirmed
+        // - FOUND report is no longer eligible
+        //
+        // Preserve partially confirmed, confirmed
+        // and rejected matches.
+
+        // TypeORM PostgreSQL DELETE result format:
+        // [deletedRows, affectedRowCount]
+        const deletedResult: [
+          Array<{ id: string }>,
+          number,
+        ] = await manager.query(
+          `
+          DELETE FROM public.matches
+          WHERE lost_report_id = $1
+            AND status = 'PENDING'
+            AND lost_confirmed = FALSE
+            AND found_confirmed = FALSE
+            AND NOT (
+              found_report_id = ANY($2::uuid[])
+            )
+          RETURNING id
+          `,
+          [lostReportId, eligibleIds],
+        );
+
+        // Count actual deleted rows, not the outer
+        // TypeORM result array (which has 2 elements).
+        const deletedRows = deletedResult[0];
+        const removedCount = deletedRows.length;
+
         return {
           candidateCount: candidates.length,
+
+          eligibleCount: eligibleCandidates.length,
+
+          excludedCount:
+            candidates.length - eligibleCandidates.length,
+
           writtenCount,
+
           unchangedOrLockedCount:
-            candidates.length - writtenCount,
+            eligibleCandidates.length - writtenCount,
+
+          removedCount,
         };
       },
     );
