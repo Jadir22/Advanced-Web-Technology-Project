@@ -303,6 +303,140 @@ async function runTests() {
     );
 
     console.log("PASS: Missing match rejected.");
+
+
+    // Test 10: Reject invalid LOST-side report type.
+    const invalidLostId = await createReport(
+      foundOwner,
+      ReportType.FOUND,
+      "Invalid LOST Side",
+    );
+
+    const validFoundId = await createReport(
+      lostOwner,
+      ReportType.FOUND,
+      "Valid FOUND Side",
+    );
+
+    const invalidLostMatchId = await insertId(
+      `INSERT INTO public.matches
+   (lost_report_id, found_report_id, match_score)
+   VALUES ($1, $2, 80)
+   RETURNING id`,
+      [invalidLostId, validFoundId],
+    );
+
+    await assert.rejects(
+      () => service.recordDecision(
+        invalidLostMatchId,
+        foundOwner,
+        "CONFIRM",
+      ),
+      ConflictException,
+    );
+
+    console.log("PASS: Invalid LOST report type rejected.");
+
+    // Test 11: Reject invalid FOUND-side report type.
+    const invalidFoundId = await createReport(
+      foundOwner,
+      ReportType.LOST,
+      "Invalid FOUND Side",
+    );
+
+    const invalidFoundMatchId = await insertId(
+      `INSERT INTO public.matches
+   (lost_report_id, found_report_id, match_score)
+   VALUES ($1, $2, 80)
+   RETURNING id`,
+      [lostId, invalidFoundId],
+    );
+
+    await assert.rejects(
+      () => service.recordDecision(
+        invalidFoundMatchId,
+        lostOwner,
+        "CONFIRM",
+      ),
+      ConflictException,
+    );
+
+    console.log("PASS: Invalid FOUND report type rejected.");
+
+    // Test 12: Reject different categories.
+    const otherCategoryId = await insertId(
+      `INSERT INTO public.categories (name, slug)
+   VALUES ($1, $2)
+   RETURNING id`,
+      [
+        `Other Confirmation Test ${suffix}`,
+        `confirm-other-${suffix}`,
+      ],
+    );
+
+    const otherCategoryFoundId = await insertId(
+      `INSERT INTO public.reports
+   (
+     user_id, category_id, report_type,
+     title, description, event_date
+   )
+   VALUES ($1, $2, $3, $4, $5, $6)
+   RETURNING id`,
+      [
+        foundOwner,
+        otherCategoryId,
+        ReportType.FOUND,
+        "Different Category Item",
+        "Temporary validation test",
+        "2026-11-10",
+      ],
+    );
+
+    const differentCategoryMatchId = await insertId(
+      `INSERT INTO public.matches
+   (lost_report_id, found_report_id, match_score)
+   VALUES ($1, $2, 80)
+   RETURNING id`,
+      [lostId, otherCategoryFoundId],
+    );
+
+    await assert.rejects(
+      () => service.recordDecision(
+        differentCategoryMatchId,
+        lostOwner,
+        "CONFIRM",
+      ),
+      ConflictException,
+    );
+
+    console.log("PASS: Different category rejected.");
+
+    // Test 13: Same owner cannot confirm a match.
+    const ownFoundId = await createReport(
+      lostOwner,
+      ReportType.FOUND,
+      "Same Owner FOUND Report",
+    );
+
+    const sameOwnerMatchId = await insertId(
+      `INSERT INTO public.matches
+   (lost_report_id, found_report_id, match_score)
+   VALUES ($1, $2, 80)
+   RETURNING id`,
+      [lostId, ownFoundId],
+    );
+
+    await assert.rejects(
+      () => service.recordDecision(
+        sameOwnerMatchId,
+        lostOwner,
+        "CONFIRM",
+      ),
+      ConflictException,
+    );
+
+    console.log("PASS: Same-owner match rejected.");
+
     console.log("ALL CONFIRMATION TESTS PASSED.");
   } finally {
     try {
