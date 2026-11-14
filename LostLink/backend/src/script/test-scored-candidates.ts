@@ -13,7 +13,8 @@ import {
   ReportType,
 } from "../modules/reports/entities/report.entity";
 
-import { MatchesService } from "../modules/matches/matches.service";
+import { MatchesService } from
+  "../modules/matches/matches.service";
 
 async function runTests() {
   const dataSource = new DataSource(dataSourceOptions);
@@ -28,7 +29,6 @@ async function runTests() {
     console.log("Database connected.");
     console.log("Testing database-integrated scoring...");
 
-    // Helper: Insert one row and return its UUID
     async function insertId(
       sql: string,
       params: unknown[],
@@ -45,16 +45,22 @@ async function runTests() {
     const gadgetsId = await insertId(
       `INSERT INTO public.categories (name, slug)
        VALUES ($1, $2) RETURNING id`,
-      [`Matching Test ${suffix}`, `matching-test-${suffix}`],
+      [
+        `Matching Test ${suffix}`,
+        `matching-test-${suffix}`,
+      ],
     );
 
     const otherCategoryId = await insertId(
       `INSERT INTO public.categories (name, slug)
        VALUES ($1, $2) RETURNING id`,
-      [`Other Test ${suffix}`, `other-test-${suffix}`],
+      [
+        `Other Test ${suffix}`,
+        `other-test-${suffix}`,
+      ],
     );
 
-    // Create test category fields
+    // Create category fields
     async function createField(
       key: string,
     ): Promise<string> {
@@ -199,7 +205,7 @@ async function runTests() {
 
     await addArea(noMatchId, "Uttara", null);
 
-    // Excluded: Same user
+    // Excluded: Same owner
     await createReport(
       userA,
       gadgetsId,
@@ -224,10 +230,10 @@ async function runTests() {
       runner.manager.getRepository(Report),
     );
 
+    // Test 1: Original scored candidates
     const results =
       await service.findScoredCandidates(lostId);
 
-    // Verify filtering and score order
     assert.equal(results.length, 3);
 
     assert.deepEqual(
@@ -248,6 +254,87 @@ async function runTests() {
     console.log("PASS: Database attributes loaded.");
     console.log("PASS: Location and date scores correct.");
     console.log("PASS: Scores sorted 100, 62, 0.");
+
+    // Test 2: Eligibility filtering
+    const eligibleCandidates =
+      await service.findEligibleCandidates(lostId);
+
+    assert.deepEqual(
+      eligibleCandidates.map(
+        (candidate) => candidate.foundReportId,
+      ),
+      [perfectId, partialId],
+    );
+
+    assert.deepEqual(
+      eligibleCandidates.map(
+        (candidate) => candidate.finalScore,
+      ),
+      [100, 62],
+    );
+
+    console.log("PASS: Zero-score candidate excluded.");
+
+    // Test 3: Persist eligible matches
+    const persistence =
+      await service.persistScoredCandidates(lostId);
+
+    assert.equal(persistence.candidateCount, 3);
+    assert.equal(persistence.eligibleCount, 2);
+    assert.equal(persistence.excludedCount, 1);
+    assert.equal(persistence.writtenCount, 2);
+    assert.equal(persistence.unchangedOrLockedCount, 0);
+
+    const savedMatches: Array<{
+      found_report_id: string;
+      match_score: string;
+    }> = await runner.query(
+      `SELECT found_report_id, match_score
+       FROM public.matches
+       WHERE lost_report_id = $1`,
+      [lostId],
+    );
+
+    assert.equal(savedMatches.length, 2);
+
+    assert.equal(
+      savedMatches.some(
+        (match) => match.found_report_id === noMatchId,
+      ),
+      false,
+    );
+
+    assert.equal(
+      Number(
+        savedMatches.find(
+          (match) => match.found_report_id === perfectId,
+        )?.match_score,
+      ),
+      100,
+    );
+
+    assert.equal(
+      Number(
+        savedMatches.find(
+          (match) => match.found_report_id === partialId,
+        )?.match_score,
+      ),
+      62,
+    );
+
+    console.log("PASS: Only eligible matches persisted.");
+
+    // Test 4: Repeated persistence creates no duplicates
+    const repeated =
+      await service.persistScoredCandidates(lostId);
+
+    assert.equal(repeated.candidateCount, 3);
+    assert.equal(repeated.eligibleCount, 2);
+    assert.equal(repeated.excludedCount, 1);
+    assert.equal(repeated.writtenCount, 0);
+
+    console.log("PASS: Duplicate persistence prevented.");
+
     console.log("ALL DATABASE SCORING TESTS PASSED.");
   } finally {
     try {
