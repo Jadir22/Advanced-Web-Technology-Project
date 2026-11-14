@@ -6,9 +6,22 @@ import { AppService } from "@/src/app.service";
 import global_config from "@/config/global_config";
 import { BullModule } from "@nestjs/bull";
 
+import { CategoriesModule } from "./modules/categories/categories.module";
+
+
+
+
+
+
 @Module({
   imports: [
+
+
     PostgresDatabaseProviderModule,
+    CategoriesModule,
+
+    
+
 
     ConfigModule.forRoot({
       isGlobal: true,
