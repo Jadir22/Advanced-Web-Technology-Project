@@ -404,3 +404,5 @@ dist
 
 # TypeScript incremental build cache
 *.tsbuildinfo
+# Private report images
+private_uploads/
