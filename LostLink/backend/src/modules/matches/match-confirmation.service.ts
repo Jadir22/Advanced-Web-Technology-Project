@@ -15,8 +15,10 @@ import {
     MatchStatus,
 } from "./entities/match.entity";
 
-import { ReportStatus } from
-    "../reports/entities/report.entity";
+import {
+    ReportStatus,
+    ReportType,
+} from "../reports/entities/report.entity";
 
 export type MatchDecision = "CONFIRM" | "REJECT";
 
@@ -32,10 +34,18 @@ interface MatchOwnershipRow {
     status: MatchStatus;
     lostConfirmed: boolean;
     foundConfirmed: boolean;
+
     lostOwnerId: string;
     foundOwnerId: string;
+
     lostReportStatus: ReportStatus;
     foundReportStatus: ReportStatus;
+
+    lostReportType: ReportType;
+    foundReportType: ReportType;
+
+    lostCategoryId: string;
+    foundCategoryId: string;
 }
 
 @Injectable()
@@ -64,23 +74,36 @@ export class MatchConfirmationService {
                 const rows: MatchOwnershipRow[] =
                     await manager.query(
                         `
-            SELECT
-              m.id,
-              m.status,
-              m.lost_confirmed AS "lostConfirmed",
-              m.found_confirmed AS "foundConfirmed",
-              lr.user_id AS "lostOwnerId",
-              fr.user_id AS "foundOwnerId",
-              lr.status AS "lostReportStatus",
-              fr.status AS "foundReportStatus"
-            FROM public.matches m
-            INNER JOIN public.reports lr
-              ON lr.id = m.lost_report_id
-            INNER JOIN public.reports fr
-              ON fr.id = m.found_report_id
-            WHERE m.id = $1
-            FOR UPDATE OF m
-            `,
+                SELECT
+                    m.id,
+                    m.status,
+                    m.lost_confirmed AS "lostConfirmed",
+                    m.found_confirmed AS "foundConfirmed",
+
+                    lr.user_id AS "lostOwnerId",
+                    fr.user_id AS "foundOwnerId",
+
+                    lr.status AS "lostReportStatus",
+                    fr.status AS "foundReportStatus",
+
+                    lr.report_type AS "lostReportType",
+                    fr.report_type AS "foundReportType",
+
+                    lr.category_id AS "lostCategoryId",
+                    fr.category_id AS "foundCategoryId"
+
+                    FROM public.matches m
+
+                    INNER JOIN public.reports lr
+                      ON lr.id = m.lost_report_id
+
+                    INNER JOIN public.reports fr
+                      ON fr.id = m.found_report_id
+
+                    WHERE m.id = $1
+
+                    FOR UPDATE OF m, lr, fr
+                    `,
                         [matchId],
                     );
 
@@ -106,6 +129,23 @@ export class MatchConfirmationService {
                 if (match.lostOwnerId === match.foundOwnerId) {
                     throw new ConflictException(
                         "Both reports have the same owner",
+                    );
+                }
+
+                // Verify correct LOST/FOUND report pairing.
+                if (
+                    match.lostReportType !== ReportType.LOST ||
+                    match.foundReportType !== ReportType.FOUND
+                ) {
+                    throw new ConflictException(
+                        "Match must contain a LOST and a FOUND report",
+                    );
+                }
+
+                // Both reports must belong to the same category.
+                if (match.lostCategoryId !== match.foundCategoryId) {
+                    throw new ConflictException(
+                        "Matched reports must have the same category",
                     );
                 }
 
