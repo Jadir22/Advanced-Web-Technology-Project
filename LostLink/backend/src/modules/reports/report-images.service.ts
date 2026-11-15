@@ -33,6 +33,11 @@ export interface ReportImageMetadata {
   createdAt: Date;
 }
 
+export interface OwnedImageFile {
+  buffer: Buffer;
+  mimeType: "image/png" | "image/jpeg";
+}
+
 @Injectable()
 export class ReportImagesService {
   private readonly logger = new Logger(
@@ -75,8 +80,43 @@ export class ReportImagesService {
     };
   }
 
-  // Add an image only if the authenticated actor
-  // owns the report.
+  private async requireOwner(
+    reportId: string,
+    actorUserId: string,
+  ): Promise<Report> {
+    this.validateIds(reportId, actorUserId);
+
+    const report = await this.reportRepository.findOne({
+      where: {
+        id: reportId,
+      },
+      relations: {
+        user: true,
+      },
+    });
+
+    if (!report) {
+      throw new NotFoundException(
+        "Report not found",
+      );
+    }
+
+    if (report.user.id !== actorUserId) {
+      throw new ForbiddenException(
+        "You do not own this report",
+      );
+    }
+
+    if (!report.user.isActive) {
+      throw new ForbiddenException(
+        "Inactive user cannot access images",
+      );
+    }
+
+    return report;
+  }
+
+  // Add an image to an OPEN report owned by the actor.
   async addImage(
     reportId: string,
     actorUserId: string,
@@ -96,8 +136,6 @@ export class ReportImagesService {
     try {
       return await this.reportRepository.manager.transaction(
         async (manager) => {
-          // Lock the report row to serialize concurrent
-          // image additions to the same report.
           const report = await manager
             .getRepository(Report)
             .createQueryBuilder("report")
@@ -150,12 +188,10 @@ export class ReportImagesService {
               },
             });
 
-          // First image becomes primary automatically.
           const isPrimary =
             existingImages.length === 0 ||
             makePrimary;
 
-          // Only one primary image is allowed.
           if (
             isPrimary &&
             existingImages.some(
@@ -167,8 +203,6 @@ export class ReportImagesService {
             );
           }
 
-          // Save the file only after validating
-          // report ownership and current status.
           const stored =
             await this.storage.saveImage(file);
 
@@ -188,7 +222,6 @@ export class ReportImagesService {
           const savedImage =
             await imageRepository.save(image);
 
-          // Do not expose the private storage key.
           return this.toMetadata(
             savedImage,
             reportId,
@@ -196,8 +229,6 @@ export class ReportImagesService {
         },
       );
     } catch (error: unknown) {
-      // The filesystem and database are not one
-      // atomic transaction. Attempt compensation.
       if (savedStorageKey) {
         try {
           await this.storage.deleteImage(
@@ -217,40 +248,15 @@ export class ReportImagesService {
     }
   }
 
-  // List metadata only for the report owner.
+  // List only images owned by the authenticated actor.
   async listOwnedImages(
     reportId: string,
     actorUserId: string,
   ): Promise<ReportImageMetadata[]> {
-    this.validateIds(reportId, actorUserId);
-
-    const report =
-      await this.reportRepository.findOne({
-        where: {
-          id: reportId,
-        },
-        relations: {
-          user: true,
-        },
-      });
-
-    if (!report) {
-      throw new NotFoundException(
-        "Report not found",
-      );
-    }
-
-    if (report.user.id !== actorUserId) {
-      throw new ForbiddenException(
-        "You do not own this report",
-      );
-    }
-
-    if (!report.user.isActive) {
-      throw new ForbiddenException(
-        "Inactive user cannot access images",
-      );
-    }
+    await this.requireOwner(
+      reportId,
+      actorUserId,
+    );
 
     const images =
       await this.imageRepository.find({
@@ -268,5 +274,56 @@ export class ReportImagesService {
     return images.map((image) =>
       this.toMetadata(image, reportId),
     );
+  }
+
+  // Read private image bytes only after ownership check.
+  async getOwnedImageFile(
+    reportId: string,
+    imageId: string,
+    actorUserId: string,
+  ): Promise<OwnedImageFile> {
+    await this.requireOwner(
+      reportId,
+      actorUserId,
+    );
+
+    if (!isUUID(imageId)) {
+      throw new BadRequestException(
+        "Invalid image UUID",
+      );
+    }
+
+    const image = await this.imageRepository.findOne({
+      where: {
+        id: imageId,
+        report: {
+          id: reportId,
+        },
+      },
+    });
+
+    if (!image) {
+      throw new NotFoundException(
+        "Image not found",
+      );
+    }
+
+    if (
+      image.mimeType !== "image/png" &&
+      image.mimeType !== "image/jpeg"
+    ) {
+      throw new ConflictException(
+        "Stored image format is unsupported",
+      );
+    }
+
+    const buffer = await this.storage.readImage(
+      image.storageKey,
+    );
+
+    return {
+      buffer,
+      mimeType: image.mimeType,
+    };
   }
 }
