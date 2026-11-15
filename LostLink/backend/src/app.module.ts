@@ -3,15 +3,29 @@ import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { BullModule } from "@nestjs/bull";
 
-import { PostgresDatabaseProviderModule } from "@/providers/database/postgres/provider.module";
-import { AppController } from "@/src/app.controller";
-import { AppService } from "@/src/app.service";
+import { PostgresDatabaseProviderModule } from
+  "@/providers/database/postgres/provider.module";
 
-import global_config from "@/config/global_config";
+import { AppController } from
+  "@/src/app.controller";
 
-import { CategoriesModule } from "./modules/categories/categories.module";
-import { AuthModule } from "./modules/auth/auth.module";
-import { ReportImagesModule } from "./modules/reports/report-images.module";
+import { AppService } from
+  "@/src/app.service";
+
+import global_config from
+  "@/config/global_config";
+
+import { CategoriesModule } from
+  "./modules/categories/categories.module";
+
+import { AuthModule } from
+  "./modules/auth/auth.module";
+
+import { ReportImagesModule } from
+  "./modules/reports/report-images.module";
+
+import { NotificationsModule } from
+  "./modules/notifications/notifications.module";
 
 @Module({
   imports: [
@@ -22,6 +36,8 @@ import { ReportImagesModule } from "./modules/reports/report-images.module";
     AuthModule,
 
     ReportImagesModule,
+
+    NotificationsModule,
 
     ConfigModule.forRoot({
       isGlobal: true,
@@ -38,8 +54,13 @@ import { ReportImagesModule } from "./modules/reports/report-images.module";
     }),
   ],
 
-  controllers: [AppController],
+  controllers: [
+    AppController,
+  ],
 
-  providers: [AppService],
+  providers: [
+    AppService,
+  ],
 })
 export class AppModule {}
+
