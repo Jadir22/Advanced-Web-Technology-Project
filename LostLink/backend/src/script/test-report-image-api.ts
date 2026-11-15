@@ -81,7 +81,15 @@ async function runTests() {
       "Testing secure report image HTTP API...",
     );
 
-    const users = new Map([
+    const users = new Map<
+      string,
+      {
+        id: string;
+        email: string;
+        isActive: boolean;
+        role: UserRole;
+      }
+    >([
       [
         ownerId,
         {
@@ -115,7 +123,7 @@ async function runTests() {
       async findOne(options: {
         where: { id: string; isActive: boolean };
       }) {
-        const user = users.get(options.where.id as any);
+        const user = users.get(options.where.id);
 
         return user?.isActive ? user : null;
       },
@@ -500,7 +508,7 @@ async function runTests() {
       "PASS: Fake image rejected (415).",
     );
 
-    // Test 13: Empty file request.
+    // Test 13: Missing image request.
     await request(server)
       .post(baseUrl)
       .set(
@@ -515,6 +523,8 @@ async function runTests() {
     );
 
     // Test 14: Invalid primary flag.
+    // Verify the actual validation message,
+    // not just the HTTP status code.
     await request(server)
       .post(baseUrl)
       .set(
@@ -526,7 +536,13 @@ async function runTests() {
         filename: "valid.png",
         contentType: "image/png",
       })
-      .expect(400);
+      .expect(400)
+      .expect((response) => {
+        assert.equal(
+          response.body.message,
+          "isPrimary must be true or false",
+        );
+      });
 
     console.log(
       "PASS: Invalid primary flag rejected (400).",
