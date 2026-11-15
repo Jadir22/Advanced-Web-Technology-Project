@@ -3,29 +3,17 @@ import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { BullModule } from "@nestjs/bull";
 
-import { PostgresDatabaseProviderModule } from
-  "@/providers/database/postgres/provider.module";
+import { PostgresDatabaseProviderModule } from "@/providers/database/postgres/provider.module";
+import { AppController } from "@/src/app.controller";
+import { AppService } from "@/src/app.service";
 
-import { AppController } from
-  "@/src/app.controller";
+import global_config from "@/config/global_config";
 
-import { AppService } from
-  "@/src/app.service";
-
-import global_config from
-  "@/config/global_config";
-
-import { CategoriesModule } from
-  "./modules/categories/categories.module";
-
-import { AuthModule } from
-  "./modules/auth/auth.module";
-
-import { ReportImagesModule } from
-  "./modules/reports/report-images.module";
-
-import { NotificationsModule } from
-  "./modules/notifications/notifications.module";
+import { CategoriesModule } from "./modules/categories/categories.module";
+import { AuthModule } from "./modules/auth/auth.module";
+import { ReportImagesModule } from "./modules/reports/report-images.module";
+import { NotificationsModule } from "./modules/notifications/notifications.module";
+import { MatchesModule } from "./modules/matches/matches.module";
 
 @Module({
   imports: [
@@ -38,6 +26,8 @@ import { NotificationsModule } from
     ReportImagesModule,
 
     NotificationsModule,
+
+    MatchesModule,
 
     ConfigModule.forRoot({
       isGlobal: true,
@@ -54,13 +44,8 @@ import { NotificationsModule } from
     }),
   ],
 
-  controllers: [
-    AppController,
-  ],
+  controllers: [AppController],
 
-  providers: [
-    AppService,
-  ],
+  providers: [AppService],
 })
 export class AppModule {}
-
