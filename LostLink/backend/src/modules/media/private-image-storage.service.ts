@@ -2,12 +2,19 @@
 import {
   BadRequestException,
   Injectable,
+  NotFoundException,
   PayloadTooLargeException,
   UnsupportedMediaTypeException,
 } from "@nestjs/common";
 
 import { randomUUID } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+
 import { join, resolve, sep } from "node:path";
 
 export const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
@@ -36,7 +43,6 @@ function detectImageType(buffer: Buffer): ImageType | null {
     "hex",
   );
 
-  // Basic PNG signature and IHDR header validation.
   if (
     buffer.length >= 24 &&
     buffer.subarray(0, 8).equals(pngSignature) &&
@@ -48,7 +54,6 @@ function detectImageType(buffer: Buffer): ImageType | null {
     };
   }
 
-  // Basic JPEG signature and ending marker validation.
   if (
     buffer.length >= 5 &&
     buffer[0] === 0xff &&
@@ -80,7 +85,6 @@ export class PrivateImageStorageService {
         ),
     );
 
-    // Never store private images inside public uploads.
     const publicDirectory = resolve(
       process.cwd(),
       "uploads",
@@ -98,7 +102,26 @@ export class PrivateImageStorageService {
     }
   }
 
-  // Save a validated image to private disk storage.
+  private resolveStorageKey(storageKey: string): string {
+    const validStorageKey =
+      /^report-images\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg)$/i;
+
+    if (
+      typeof storageKey !== "string" ||
+      !validStorageKey.test(storageKey)
+    ) {
+      throw new BadRequestException(
+        "Invalid private image storage key",
+      );
+    }
+
+    const fileName = storageKey.slice(
+      "report-images/".length,
+    );
+
+    return join(this.storageDirectory, fileName);
+  }
+
   async saveImage(
     file: ImageFileInput,
   ): Promise<StoredImageResult> {
@@ -142,7 +165,6 @@ export class PrivateImageStorageService {
       );
     }
 
-    // Never use the filename provided by the client.
     const fileName =
       `${randomUUID()}.${detectedType.extension}`;
 
@@ -168,26 +190,30 @@ export class PrivateImageStorageService {
     };
   }
 
-  // Delete only a private file with a valid storage key.
-  // Used when database persistence fails.
-  async deleteImage(storageKey: string): Promise<void> {
-    const validStorageKey =
-      /^report-images\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg)$/i;
+  // Called only after database ownership validation.
+  async readImage(storageKey: string): Promise<Buffer> {
+    const filePath = this.resolveStorageKey(storageKey);
 
-    if (!validStorageKey.test(storageKey)) {
-      throw new BadRequestException(
-        "Invalid private image storage key",
-      );
+    try {
+      return await readFile(filePath);
+    } catch (error: unknown) {
+      if (
+        (error as NodeJS.ErrnoException).code === "ENOENT"
+      ) {
+        throw new NotFoundException(
+          "Stored image file not found",
+        );
+      }
+
+      throw error;
     }
+  }
 
-    const fileName = storageKey.slice(
-      "report-images/".length,
-    );
+  async deleteImage(storageKey: string): Promise<void> {
+    const filePath = this.resolveStorageKey(storageKey);
 
-    await rm(
-      join(this.storageDirectory, fileName),
-      { force: true },
-    );
+    await rm(filePath, {
+      force: true,
+    });
   }
 }
-

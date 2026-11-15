@@ -11,6 +11,9 @@ import global_config from "@/config/global_config";
 
 import { CategoriesModule } from "./modules/categories/categories.module";
 import { AuthModule } from "./modules/auth/auth.module";
+import { ReportImagesModule } from "./modules/reports/report-images.module";
+import { NotificationsModule } from "./modules/notifications/notifications.module";
+import { MatchesModule } from "./modules/matches/matches.module";
 import { ReportsModule } from "./modules/reports/reports.module";
 
 @Module({
@@ -20,6 +23,12 @@ import { ReportsModule } from "./modules/reports/reports.module";
     CategoriesModule,
 
     AuthModule,
+
+    ReportImagesModule,
+
+    NotificationsModule,
+
+    MatchesModule,
 
     ReportsModule,
 
