@@ -9,9 +9,14 @@ import { AppService } from "@/src/app.service";
 
 import global_config from "@/config/global_config";
 
-import { CategoriesModule } from "./modules/categories/categories.module";
-import { AuthModule } from "./modules/auth/auth.module";
-import { ReportImagesModule } from "./modules/reports/report-images.module";
+import { CategoriesModule } from
+  "./modules/categories/categories.module";
+
+import { AuthModule } from
+  "./modules/auth/auth.module";
+
+import { MatchesModule } from
+  "./modules/matches/matches.module";
 
 @Module({
   imports: [
@@ -21,7 +26,7 @@ import { ReportImagesModule } from "./modules/reports/report-images.module";
 
     AuthModule,
 
-    ReportImagesModule,
+    MatchesModule,
 
     ConfigModule.forRoot({
       isGlobal: true,
@@ -38,8 +43,12 @@ import { ReportImagesModule } from "./modules/reports/report-images.module";
     }),
   ],
 
-  controllers: [AppController],
+  controllers: [
+    AppController,
+  ],
 
-  providers: [AppService],
+  providers: [
+    AppService,
+  ],
 })
 export class AppModule {}
