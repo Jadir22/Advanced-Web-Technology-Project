@@ -1,3 +1,4 @@
+
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { BullModule } from "@nestjs/bull";
@@ -10,6 +11,7 @@ import global_config from "@/config/global_config";
 
 import { CategoriesModule } from "./modules/categories/categories.module";
 import { AuthModule } from "./modules/auth/auth.module";
+import { ReportsModule } from "./modules/reports/reports.module";
 
 @Module({
   imports: [
@@ -18,6 +20,8 @@ import { AuthModule } from "./modules/auth/auth.module";
     CategoriesModule,
 
     AuthModule,
+
+    ReportsModule,
 
     ConfigModule.forRoot({
       isGlobal: true,
