@@ -139,7 +139,6 @@ export class ReportImagesController {
         fileSize: MAX_IMAGE_SIZE,
         files: 1,
         fields: 1,
-        parts: 2,
       },
     }),
   )
