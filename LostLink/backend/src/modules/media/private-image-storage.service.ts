@@ -7,7 +7,7 @@ import {
 } from "@nestjs/common";
 
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 
 export const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
@@ -80,7 +80,7 @@ export class PrivateImageStorageService {
         ),
     );
 
-    // Never store private files under the public directory.
+    // Never store private images inside public uploads.
     const publicDirectory = resolve(
       process.cwd(),
       "uploads",
@@ -98,6 +98,7 @@ export class PrivateImageStorageService {
     }
   }
 
+  // Save a validated image to private disk storage.
   async saveImage(
     file: ImageFileInput,
   ): Promise<StoredImageResult> {
@@ -141,7 +142,7 @@ export class PrivateImageStorageService {
       );
     }
 
-    // Never use the client's original filename as a path.
+    // Never use the filename provided by the client.
     const fileName =
       `${randomUUID()}.${detectedType.extension}`;
 
@@ -166,4 +167,27 @@ export class PrivateImageStorageService {
       sizeBytes: actualSize,
     };
   }
+
+  // Delete only a private file with a valid storage key.
+  // Used when database persistence fails.
+  async deleteImage(storageKey: string): Promise<void> {
+    const validStorageKey =
+      /^report-images\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpg)$/i;
+
+    if (!validStorageKey.test(storageKey)) {
+      throw new BadRequestException(
+        "Invalid private image storage key",
+      );
+    }
+
+    const fileName = storageKey.slice(
+      "report-images/".length,
+    );
+
+    await rm(
+      join(this.storageDirectory, fileName),
+      { force: true },
+    );
+  }
 }
+
