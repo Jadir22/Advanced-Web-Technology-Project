@@ -9,14 +9,11 @@ import { AppService } from "@/src/app.service";
 
 import global_config from "@/config/global_config";
 
-import { CategoriesModule } from
-  "./modules/categories/categories.module";
-
-import { AuthModule } from
-  "./modules/auth/auth.module";
-
-import { MatchesModule } from
-  "./modules/matches/matches.module";
+import { CategoriesModule } from "./modules/categories/categories.module";
+import { AuthModule } from "./modules/auth/auth.module";
+import { ReportImagesModule } from "./modules/reports/report-images.module";
+import { NotificationsModule } from "./modules/notifications/notifications.module";
+import { MatchesModule } from "./modules/matches/matches.module";
 
 @Module({
   imports: [
@@ -25,6 +22,10 @@ import { MatchesModule } from
     CategoriesModule,
 
     AuthModule,
+
+    ReportImagesModule,
+
+    NotificationsModule,
 
     MatchesModule,
 
@@ -43,12 +44,8 @@ import { MatchesModule } from
     }),
   ],
 
-  controllers: [
-    AppController,
-  ],
+  controllers: [AppController],
 
-  providers: [
-    AppService,
-  ],
+  providers: [AppService],
 })
 export class AppModule {}
