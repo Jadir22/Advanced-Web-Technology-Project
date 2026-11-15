@@ -14,6 +14,7 @@ import { AuthModule } from "./modules/auth/auth.module";
 import { ReportImagesModule } from "./modules/reports/report-images.module";
 import { NotificationsModule } from "./modules/notifications/notifications.module";
 import { MatchesModule } from "./modules/matches/matches.module";
+import { ReportsModule } from "./modules/reports/reports.module";
 
 @Module({
   imports: [
@@ -28,6 +29,8 @@ import { MatchesModule } from "./modules/matches/matches.module";
     NotificationsModule,
 
     MatchesModule,
+
+    ReportsModule,
 
     ConfigModule.forRoot({
       isGlobal: true,
