@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Optional,
   Param,
   ParseUUIDPipe,
   Post,
@@ -39,12 +40,14 @@ import {
   ReportsService,
 } from "./reports.service";
 
-import { CreateReportDto } from
-  "./dto/create-report.dto";
+import {
+  ReportMatchingWorkflowService,
+} from "./report-matching-workflow.service";
 
-// Authentication must provide a verified user object.
-// Final user payload mapping will be checked against
-// Sifat's JWT strategy during MS-03B.
+import {
+  CreateReportDto,
+} from "./dto/create-report.dto";
+
 export type VerifiedReportRequest = Request & {
   user?: {
     id?: string;
@@ -65,6 +68,12 @@ export type VerifiedReportRequest = Request & {
 export class ReportsController {
   constructor(
     private readonly reportsService: ReportsService,
+
+    // Optional to preserve existing isolated
+    // controller tests that mock ReportsService.
+    @Optional()
+    private readonly matchingWorkflow?:
+      ReportMatchingWorkflowService,
   ) {}
 
   private getActorUserId(
@@ -87,10 +96,12 @@ export class ReportsController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
-    summary: "Create a LOST or FOUND report",
+    summary:
+      "Create a report and automatically find matches",
   })
   @ApiCreatedResponse({
-    description: "Report created successfully",
+    description:
+      "Report created and matching workflow completed",
   })
   @ApiBadRequestResponse({
     description: "Invalid report information",
@@ -108,6 +119,15 @@ export class ReportsController {
     const actorUserId =
       this.getActorUserId(request);
 
+    if (this.matchingWorkflow) {
+      return this.matchingWorkflow.createWithMatching(
+        actorUserId,
+        input,
+      );
+    }
+
+    // Compatibility for isolated legacy tests
+    // that provide a mocked ReportsService only.
     return this.reportsService.createReport(
       actorUserId,
       input,
@@ -123,7 +143,8 @@ export class ReportsController {
     description: "Report UUID",
   })
   @ApiOkResponse({
-    description: "Own report retrieved successfully",
+    description:
+      "Own report retrieved successfully",
   })
   @ApiBadRequestResponse({
     description: "Invalid report UUID",
@@ -132,7 +153,8 @@ export class ReportsController {
     description: "Authentication required",
   })
   @ApiForbiddenResponse({
-    description: "User does not own the report",
+    description:
+      "User does not own this report",
   })
   @ApiNotFoundResponse({
     description: "Report not found",
