@@ -1,4 +1,3 @@
-
 import "reflect-metadata";
 
 import { strict as assert } from "node:assert";
@@ -22,6 +21,12 @@ import { User } from
 import { Match } from
   "../modules/matches/entities/match.entity";
 
+import { Payment } from
+  "../modules/payments/entities/payment.entity";
+
+import { PaymentsService } from
+  "../modules/payments/payments.service";
+
 import { Conversation } from
   "../modules/chat/entities/conversation.entity";
 
@@ -31,15 +36,16 @@ import { Message } from
 import { ChatService } from
   "../modules/chat/chat.service";
 
-async function runTests() {
+async function runTests(): Promise<void> {
   if (process.env.NODE_ENV === "production") {
     throw new Error(
       "Never run chat database tests in production",
     );
   }
 
-  const dataSource =
-    new DataSource(dataSourceOptions);
+  const dataSource = new DataSource(
+    dataSourceOptions,
+  );
 
   await dataSource.initialize();
 
@@ -50,7 +56,9 @@ async function runTests() {
     await runner.startTransaction();
 
     console.log("Database connected.");
-    console.log("Testing secure chat database...");
+    console.log(
+      "Testing secure chat and payment integration...",
+    );
 
     async function insertId(
       sql: string,
@@ -60,8 +68,13 @@ async function runTests() {
         await runner.query(sql, values);
 
       assert.equal(rows.length, 1);
+
       return rows[0].id;
     }
+
+    // -----------------------------------------
+    // Create temporary category and users
+    // -----------------------------------------
 
     const suffix = randomUUID().slice(0, 12);
 
@@ -103,6 +116,10 @@ async function runTests() {
     const outsider = await createUser(
       "Outsider",
     );
+
+    // -----------------------------------------
+    // Create temporary reports
+    // -----------------------------------------
 
     async function createReport(
       userId: string,
@@ -155,6 +172,10 @@ async function runTests() {
       foundOwner,
       "FOUND",
     );
+
+    // -----------------------------------------
+    // Create temporary matches
+    // -----------------------------------------
 
     async function createMatch(
       foundId: string,
@@ -212,14 +233,28 @@ async function runTests() {
       false,
     );
 
+    // -----------------------------------------
+    // Initialize PaymentsService
+    // -----------------------------------------
+
+    const paymentsService = new PaymentsService(
+      runner.manager.getRepository(Payment),
+      runner.manager.getRepository(User),
+    );
+
+    // ChatService now requires five arguments.
     const service = new ChatService(
       runner.manager.getRepository(Conversation),
       runner.manager.getRepository(Message),
       runner.manager.getRepository(Match),
       runner.manager.getRepository(User),
+      paymentsService,
     );
 
-    // Test 1: Pending match cannot chat.
+    // -----------------------------------------
+    // TEST 1: Pending match cannot chat
+    // -----------------------------------------
+
     await assert.rejects(
       () => service.createConversation(
         pendingMatch,
@@ -232,7 +267,10 @@ async function runTests() {
       "PASS: Pending match blocked.",
     );
 
-    // Test 2: Rejected match cannot chat.
+    // -----------------------------------------
+    // TEST 2: Rejected match cannot chat
+    // -----------------------------------------
+
     await assert.rejects(
       () => service.createConversation(
         rejectedMatch,
@@ -245,7 +283,10 @@ async function runTests() {
       "PASS: Rejected match blocked.",
     );
 
-    // Test 3: Both confirmation flags required.
+    // -----------------------------------------
+    // TEST 3: Both confirmations required
+    // -----------------------------------------
+
     await assert.rejects(
       () => service.createConversation(
         incompleteMatch,
@@ -258,7 +299,10 @@ async function runTests() {
       "PASS: Incomplete confirmation blocked.",
     );
 
-    // Test 4: Third party cannot create chat.
+    // -----------------------------------------
+    // TEST 4: Outsider cannot create chat
+    // -----------------------------------------
+
     await assert.rejects(
       () => service.createConversation(
         confirmedMatch,
@@ -271,7 +315,100 @@ async function runTests() {
       "PASS: Outsider conversation creation blocked.",
     );
 
-    // Test 5: Confirmed owner creates chat.
+    // -----------------------------------------
+    // TEST 5: Unpaid owner cannot chat
+    // -----------------------------------------
+
+    await assert.rejects(
+      () => service.createConversation(
+        confirmedMatch,
+        lostOwner,
+      ),
+      ForbiddenException,
+    );
+
+    console.log(
+      "PASS: Unpaid LOST owner cannot create chat.",
+    );
+
+    // -----------------------------------------
+    // TEST 6: Pending payment does not unlock
+    // -----------------------------------------
+
+    const lostPaymentId = await insertId(
+      `INSERT INTO public.payments
+        (
+          user_id,
+          match_id,
+          amount,
+          currency,
+          provider,
+          status
+        )
+       VALUES (
+         $1,
+         $2,
+         10.00,
+         'BDT',
+         'MOCK',
+         'PENDING'
+       )
+       RETURNING id`,
+      [
+        lostOwner,
+        confirmedMatch,
+      ],
+    );
+
+    await assert.rejects(
+      () => service.createConversation(
+        confirmedMatch,
+        lostOwner,
+      ),
+      ForbiddenException,
+    );
+
+    console.log(
+      "PASS: Pending payment does not unlock chat.",
+    );
+
+    // -----------------------------------------
+    // Simulate verified successful payment
+    // -----------------------------------------
+
+    await runner.query(
+      `UPDATE public.payments
+       SET
+         status = 'SUCCESS',
+         paid_at = NOW(),
+         transaction_id = $2,
+         provider_payment_id = $2
+       WHERE id = $1`,
+      [
+        lostPaymentId,
+        `mock-chat-${randomUUID()}`,
+      ],
+    );
+
+    const lostUnlock =
+      await paymentsService.getUnlockStatus(
+        confirmedMatch,
+        lostOwner,
+      );
+
+    assert.equal(
+      lostUnlock.unlocked,
+      true,
+    );
+
+    console.log(
+      "PASS: Successful LOST payment unlocks match.",
+    );
+
+    // -----------------------------------------
+    // TEST 7: Paid LOST owner creates chat
+    // -----------------------------------------
+
     const conversation =
       await service.createConversation(
         confirmedMatch,
@@ -279,16 +416,107 @@ async function runTests() {
       );
 
     assert.ok(conversation.id);
+
     assert.equal(
       conversation.matchId,
       confirmedMatch,
     );
 
     console.log(
-      "PASS: Confirmed conversation created.",
+      "PASS: Paid LOST owner creates conversation.",
     );
 
-    // Test 6: One conversation per match.
+    // -----------------------------------------
+    // TEST 8: FOUND owner remains locked
+    // -----------------------------------------
+
+    await assert.rejects(
+      () => service.createConversation(
+        confirmedMatch,
+        foundOwner,
+      ),
+      ForbiddenException,
+    );
+
+    await assert.rejects(
+      () => service.listMessages(
+        conversation.id,
+        foundOwner,
+        {
+          page: 1,
+          limit: 20,
+        },
+      ),
+      ForbiddenException,
+    );
+
+    const unpaidFoundList =
+      await service.listMine(foundOwner);
+
+    assert.equal(
+      unpaidFoundList.length,
+      0,
+    );
+
+    console.log(
+      "PASS: Unpaid FOUND owner cannot access chat.",
+    );
+
+    // -----------------------------------------
+    // Simulate FOUND owner's successful payment
+    // -----------------------------------------
+
+    await insertId(
+      `INSERT INTO public.payments
+        (
+          user_id,
+          match_id,
+          amount,
+          currency,
+          provider,
+          status,
+          transaction_id,
+          provider_payment_id,
+          paid_at
+        )
+       VALUES (
+         $1,
+         $2,
+         10.00,
+         'BDT',
+         'MOCK',
+         'SUCCESS',
+         $3,
+         $3,
+         NOW()
+       )
+       RETURNING id`,
+      [
+        foundOwner,
+        confirmedMatch,
+        `mock-chat-${randomUUID()}`,
+      ],
+    );
+
+    const foundUnlock =
+      await paymentsService.getUnlockStatus(
+        confirmedMatch,
+        foundOwner,
+      );
+
+    assert.equal(
+      foundUnlock.unlocked,
+      true,
+    );
+
+    console.log(
+      "PASS: Successful FOUND payment unlocks match.",
+    );
+
+    // -----------------------------------------
+    // TEST 9: Duplicate conversation prevented
+    // -----------------------------------------
+
     const repeated =
       await service.createConversation(
         confirmedMatch,
@@ -313,7 +541,8 @@ async function runTests() {
 
     const rows: Array<{ id: string }> =
       await runner.query(
-        `SELECT id FROM public.conversations
+        `SELECT id
+         FROM public.conversations
          WHERE match_id = $1`,
         [confirmedMatch],
       );
@@ -324,7 +553,10 @@ async function runTests() {
       "PASS: Duplicate conversation prevented.",
     );
 
-    // Test 7: Only the owners see the chat.
+    // -----------------------------------------
+    // TEST 10: Private conversation listing
+    // -----------------------------------------
+
     const lostList =
       await service.listMine(lostOwner);
 
@@ -342,12 +574,18 @@ async function runTests() {
       "PASS: Private conversation listing.",
     );
 
-    // Test 8: Third-party history denied.
+    // -----------------------------------------
+    // TEST 11: Third-party history denied
+    // -----------------------------------------
+
     await assert.rejects(
       () => service.listMessages(
         conversation.id,
         outsider,
-        { page: 1, limit: 20 },
+        {
+          page: 1,
+          limit: 20,
+        },
       ),
       ForbiddenException,
     );
@@ -356,7 +594,10 @@ async function runTests() {
       "PASS: Third-party history denied.",
     );
 
-    // Test 9: Third-party sending denied.
+    // -----------------------------------------
+    // TEST 12: Third-party sending denied
+    // -----------------------------------------
+
     await assert.rejects(
       () => service.sendMessage(
         conversation.id,
@@ -370,7 +611,10 @@ async function runTests() {
       "PASS: Third-party message denied.",
     );
 
-    // Test 10: Message validation.
+    // -----------------------------------------
+    // TEST 13: Invalid message content
+    // -----------------------------------------
+
     await assert.rejects(
       () => service.sendMessage(
         conversation.id,
@@ -393,12 +637,16 @@ async function runTests() {
       "PASS: Invalid message content blocked.",
     );
 
-    // Test 11: LOST owner sends.
-    const message1 = await service.sendMessage(
-      conversation.id,
-      lostOwner,
-      "  Is this my lost phone?  ",
-    );
+    // -----------------------------------------
+    // TEST 14: LOST owner sends message
+    // -----------------------------------------
+
+    const message1 =
+      await service.sendMessage(
+        conversation.id,
+        lostOwner,
+        "  Is this my lost phone?  ",
+      );
 
     assert.equal(
       message1.content,
@@ -414,12 +662,16 @@ async function runTests() {
       "PASS: LOST owner message saved.",
     );
 
-    // Test 12: FOUND owner replies.
-    const message2 = await service.sendMessage(
-      conversation.id,
-      foundOwner,
-      "Please verify the phone details.",
-    );
+    // -----------------------------------------
+    // TEST 15: FOUND owner replies
+    // -----------------------------------------
+
+    const message2 =
+      await service.sendMessage(
+        conversation.id,
+        foundOwner,
+        "Please verify the phone details.",
+      );
 
     assert.equal(
       message2.senderId,
@@ -430,12 +682,19 @@ async function runTests() {
       "PASS: FOUND owner reply saved.",
     );
 
-    // Test 13: Both owners see history.
-    const history = await service.listMessages(
-      conversation.id,
-      foundOwner,
-      { page: 1, limit: 20 },
-    );
+    // -----------------------------------------
+    // TEST 16: Message history
+    // -----------------------------------------
+
+    const history =
+      await service.listMessages(
+        conversation.id,
+        foundOwner,
+        {
+          page: 1,
+          limit: 20,
+        },
+      );
 
     assert.equal(history.total, 2);
     assert.equal(history.messages.length, 2);
@@ -461,12 +720,19 @@ async function runTests() {
       "PASS: Message history retrieved safely.",
     );
 
-    // Test 14: Pagination.
-    const page = await service.listMessages(
-      conversation.id,
-      lostOwner,
-      { page: 1, limit: 1 },
-    );
+    // -----------------------------------------
+    // TEST 17: Pagination
+    // -----------------------------------------
+
+    const page =
+      await service.listMessages(
+        conversation.id,
+        lostOwner,
+        {
+          page: 1,
+          limit: 1,
+        },
+      );
 
     assert.equal(page.total, 2);
     assert.equal(page.messages.length, 1);
@@ -475,12 +741,18 @@ async function runTests() {
       "PASS: Message pagination.",
     );
 
-    // Test 15: Unknown conversation.
+    // -----------------------------------------
+    // TEST 18: Unknown conversation
+    // -----------------------------------------
+
     await assert.rejects(
       () => service.listMessages(
         randomUUID(),
         lostOwner,
-        { page: 1, limit: 20 },
+        {
+          page: 1,
+          limit: 20,
+        },
       ),
       NotFoundException,
     );
@@ -489,7 +761,10 @@ async function runTests() {
       "PASS: Missing conversation rejected.",
     );
 
-    // Test 16: Inactive participant blocks chat.
+    // -----------------------------------------
+    // TEST 19: Inactive participant
+    // -----------------------------------------
+
     await runner.query(
       `UPDATE public.users
        SET is_active = FALSE
@@ -510,20 +785,45 @@ async function runTests() {
       "PASS: Inactive participant blocks chat.",
     );
 
-    console.log(
-      "ALL CHAT DATABASE TESTS PASSED.",
+    // -----------------------------------------
+    // TEST 20: Inactive owner cannot list chat
+    // -----------------------------------------
+
+    const inactiveList =
+      await service.listMine(lostOwner);
+
+    assert.equal(
+      inactiveList.length,
+      0,
     );
+
+    console.log(
+      "PASS: Inactive participant hides conversation.",
+    );
+
+    // -----------------------------------------
+    // Final result
+    // -----------------------------------------
+
+    console.log(
+      "ALL CHAT AND PAYMENT DATABASE TESTS PASSED.",
+    );
+
   } finally {
     try {
       if (runner.isTransactionActive) {
         await runner.rollbackTransaction();
+
         console.log(
           "Chat test data rolled back.",
         );
       }
     } finally {
       await runner.release();
-      await dataSource.destroy();
+
+      if (dataSource.isInitialized) {
+        await dataSource.destroy();
+      }
     }
   }
 }

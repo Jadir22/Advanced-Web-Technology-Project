@@ -1,4 +1,3 @@
-
 import {
   BadRequestException,
   ConflictException,
@@ -18,6 +17,9 @@ import {
   Match,
   MatchStatus,
 } from "../matches/entities/match.entity";
+
+import { PaymentsService } from
+  "../payments/payments.service";
 
 import { Conversation } from
   "./entities/conversation.entity";
@@ -68,6 +70,8 @@ export class ChatService {
     @InjectRepository(User)
     private readonly userRepository:
       Repository<User>,
+
+    private readonly paymentsService: PaymentsService,
   ) {}
 
   private validateId(id: string): void {
@@ -75,7 +79,9 @@ export class ChatService {
       typeof id !== "string" ||
       !isUUID(id)
     ) {
-      throw new BadRequestException("Invalid UUID");
+      throw new BadRequestException(
+        "Invalid UUID",
+      );
     }
   }
 
@@ -124,7 +130,9 @@ export class ChatService {
       );
     }
 
-    if (lostOwner.id === foundOwner.id) {
+    if (
+      lostOwner.id === foundOwner.id
+    ) {
       throw new ConflictException(
         "Both reports cannot have the same owner",
       );
@@ -164,11 +172,14 @@ export class ChatService {
     };
   }
 
+  // Validate account, match ownership,
+  // confirmation and account activity.
   private async requireConfirmedMatch(
     matchId: string,
     actorId: string,
   ): Promise<Match> {
     this.validateId(matchId);
+
     await this.requireActiveUser(actorId);
 
     const match = await this.matchRepository.findOne({
@@ -191,18 +202,27 @@ export class ChatService {
       );
     }
 
-    this.verifyMatchAccess(match, actorId);
+    this.verifyMatchAccess(
+      match,
+      actorId,
+    );
 
     return match;
   }
 
-  // One conversation per confirmed match.
-  // Database UNIQUE(match_id) prevents duplicates.
+  // Create one conversation per match.
+  // Successful unlock payment is required.
   async createConversation(
     matchId: string,
     actorId: string,
   ): Promise<ConversationResult> {
     await this.requireConfirmedMatch(
+      matchId,
+      actorId,
+    );
+
+    // SF-04 Payment Unlock Integration
+    await this.paymentsService.assertUnlocked(
       matchId,
       actorId,
     );
@@ -240,7 +260,8 @@ export class ChatService {
     return this.toConversation(conversation);
   }
 
-  // List only owned, confirmed conversations.
+  // List only owned, confirmed
+  // and individually unlocked conversations.
   async listMine(
     actorId: string,
   ): Promise<ConversationResult[]> {
@@ -252,18 +273,23 @@ export class ChatService {
           {
             match: {
               lostReport: {
-                user: { id: actorId },
+                user: {
+                  id: actorId,
+                },
               },
             },
           },
           {
             match: {
               foundReport: {
-                user: { id: actorId },
+                user: {
+                  id: actorId,
+                },
               },
             },
           },
         ],
+
         relations: {
           match: {
             lostReport: {
@@ -274,35 +300,61 @@ export class ChatService {
             },
           },
         },
+
         order: {
           createdAt: "DESC",
           id: "ASC",
         },
       });
 
-    return conversations
-      .filter((conversation) => {
-        try {
-          this.verifyMatchAccess(
-            conversation.match,
-            actorId,
-          );
-          return true;
-        } catch {
-          return false;
+    const unlocked: ConversationResult[] = [];
+
+    for (const conversation of conversations) {
+      try {
+        // Check ownership and match confirmation.
+        this.verifyMatchAccess(
+          conversation.match,
+          actorId,
+        );
+
+        // Check this user's own payment.
+        await this.paymentsService.assertUnlocked(
+          conversation.match.id,
+          actorId,
+        );
+
+        unlocked.push(
+          this.toConversation(conversation),
+        );
+      } catch (error) {
+        // A locked or inaccessible conversation
+        // should not appear in the listing.
+        if (
+          error instanceof ForbiddenException ||
+          error instanceof ConflictException ||
+          error instanceof NotFoundException
+        ) {
+          continue;
         }
-      })
-      .map((conversation) =>
-        this.toConversation(conversation),
-      );
+
+        // Unexpected database errors must
+        // not be silently ignored.
+        throw error;
+      }
+    }
+
+    return unlocked;
   }
 
   // Shared REST and WebSocket authorization.
+  // Every private conversation access requires
+  // the requesting user's successful payment.
   async assertConversationAccess(
     conversationId: string,
     actorId: string,
   ): Promise<Conversation> {
     this.validateId(conversationId);
+
     await this.requireActiveUser(actorId);
 
     const conversation =
@@ -328,15 +380,23 @@ export class ChatService {
       );
     }
 
+    // Check match ownership and confirmation.
     this.verifyMatchAccess(
       conversation.match,
+      actorId,
+    );
+
+    // Check the requesting user's payment.
+    await this.paymentsService.assertUnlocked(
+      conversation.match.id,
       actorId,
     );
 
     return conversation;
   }
 
-  // History ordered oldest-first.
+  // Read messages only after payment unlock.
+  // History is returned oldest-first.
   async listMessages(
     conversationId: string,
     actorId: string,
@@ -354,21 +414,26 @@ export class ChatService {
             id: conversationId,
           },
         },
+
         relations: {
           conversation: true,
           sender: true,
         },
+
         order: {
           createdAt: "ASC",
           id: "ASC",
         },
-        skip: (query.page - 1) * query.limit,
+
+        skip:
+          (query.page - 1) * query.limit,
+
         take: query.limit,
       });
 
     return {
-      messages: messages.map((message) =>
-        this.toMessage(message),
+      messages: messages.map(
+        (message) => this.toMessage(message),
       ),
       total,
       page: query.page,
@@ -376,7 +441,8 @@ export class ChatService {
     };
   }
 
-  // Save only after ownership verification.
+  // Only a confirmed, paid participant
+  // can save a message.
   async sendMessage(
     conversationId: string,
     actorId: string,
@@ -405,16 +471,21 @@ export class ChatService {
       );
     }
 
-    const message = this.messageRepository.create({
-      conversation,
-      sender: {
-        id: actorId,
-      } as User,
-      content: cleaned,
-    });
+    const message =
+      this.messageRepository.create({
+        conversation,
+
+        sender: {
+          id: actorId,
+        } as User,
+
+        content: cleaned,
+      });
 
     const saved =
-      await this.messageRepository.save(message);
+      await this.messageRepository.save(
+        message,
+      );
 
     return this.toMessage(saved);
   }
