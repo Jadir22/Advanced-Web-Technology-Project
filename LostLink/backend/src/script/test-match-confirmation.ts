@@ -437,6 +437,154 @@ async function runTests() {
 
     console.log("PASS: Same-owner match rejected.");
 
+
+    // Test 14:
+    // Inactive LOST owner cannot make decisions.
+    await runner.query(
+      `UPDATE public.users
+       SET is_active = FALSE
+       WHERE id = $1`,
+      [lostOwner],
+    );
+
+    await assert.rejects(
+      () => service.recordDecision(
+        fourth.matchId,
+        lostOwner,
+        "CONFIRM",
+      ),
+      ForbiddenException,
+    );
+
+    console.log(
+      "PASS: Inactive LOST owner blocked.",
+    );
+
+    // Test 15:
+    // Active FOUND owner cannot complete a match
+    // while the LOST owner is inactive.
+    await assert.rejects(
+      () => service.recordDecision(
+        fourth.matchId,
+        foundOwner,
+        "CONFIRM",
+      ),
+      ForbiddenException,
+    );
+
+    console.log(
+      "PASS: Inactive LOST participant blocks decisions.",
+    );
+
+    // Reactivate LOST owner.
+    await runner.query(
+      `UPDATE public.users
+       SET is_active = TRUE
+       WHERE id = $1`,
+      [lostOwner],
+    );
+
+    // Test 16:
+    // Inactive FOUND owner cannot make decisions.
+    await runner.query(
+      `UPDATE public.users
+       SET is_active = FALSE
+       WHERE id = $1`,
+      [foundOwner],
+    );
+
+    await assert.rejects(
+      () => service.recordDecision(
+        fourth.matchId,
+        foundOwner,
+        "CONFIRM",
+      ),
+      ForbiddenException,
+    );
+
+    console.log(
+      "PASS: Inactive FOUND owner blocked.",
+    );
+
+    // Test 17:
+    // Active LOST owner cannot confirm while
+    // the FOUND owner is inactive.
+    await assert.rejects(
+      () => service.recordDecision(
+        fourth.matchId,
+        lostOwner,
+        "CONFIRM",
+      ),
+      ForbiddenException,
+    );
+
+    console.log(
+      "PASS: Inactive FOUND participant blocks decisions.",
+    );
+
+    // Test 18:
+    // Denied decisions must not modify the match.
+    const unchanged = await readMatch(
+      fourth.matchId,
+    );
+
+    assert.equal(
+      unchanged.status,
+      "PENDING",
+    );
+
+    assert.equal(
+      unchanged.lost_confirmed,
+      false,
+    );
+
+    assert.equal(
+      unchanged.found_confirmed,
+      false,
+    );
+
+    console.log(
+      "PASS: Denied decisions do not modify match.",
+    );
+
+    // Reactivate FOUND owner.
+    await runner.query(
+      `UPDATE public.users
+       SET is_active = TRUE
+       WHERE id = $1`,
+      [foundOwner],
+    );
+
+    // Test 19:
+    // A valid owner can confirm again after
+    // both accounts become active.
+    const recoveredDecision =
+      await service.recordDecision(
+        fourth.matchId,
+        lostOwner,
+        "CONFIRM",
+      );
+
+    assert.equal(
+      recoveredDecision.status,
+      "PENDING",
+    );
+
+    assert.equal(
+      recoveredDecision.lostConfirmed,
+      true,
+    );
+
+    assert.equal(
+      recoveredDecision.foundConfirmed,
+      false,
+    );
+
+    console.log(
+      "PASS: Active owners can resume confirmation.",
+    );
+
+
     console.log("ALL CONFIRMATION TESTS PASSED.");
   } finally {
     try {

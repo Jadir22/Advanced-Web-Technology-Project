@@ -1,5 +1,3 @@
-
-
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { BullModule } from "@nestjs/bull";
@@ -16,6 +14,7 @@ import { ReportImagesModule } from "./modules/reports/report-images.module";
 import { NotificationsModule } from "./modules/notifications/notifications.module";
 import { MatchesModule } from "./modules/matches/matches.module";
 import { ReportsModule } from "./modules/reports/reports.module";
+import { PaymentsModule } from "./modules/payments/payments.module";
 import { ChatModule } from "./modules/chat/chat.module";
 
 @Module({
@@ -33,6 +32,8 @@ import { ChatModule } from "./modules/chat/chat.module";
     MatchesModule,
 
     ReportsModule,
+
+    PaymentsModule,
 
     ChatModule,
 
