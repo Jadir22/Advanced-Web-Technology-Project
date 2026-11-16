@@ -1,4 +1,5 @@
 
+
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { BullModule } from "@nestjs/bull";
@@ -15,6 +16,7 @@ import { ReportImagesModule } from "./modules/reports/report-images.module";
 import { NotificationsModule } from "./modules/notifications/notifications.module";
 import { MatchesModule } from "./modules/matches/matches.module";
 import { ReportsModule } from "./modules/reports/reports.module";
+import { ChatModule } from "./modules/chat/chat.module";
 
 @Module({
   imports: [
@@ -31,6 +33,8 @@ import { ReportsModule } from "./modules/reports/reports.module";
     MatchesModule,
 
     ReportsModule,
+
+    ChatModule,
 
     ConfigModule.forRoot({
       isGlobal: true,
