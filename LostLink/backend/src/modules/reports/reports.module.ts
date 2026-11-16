@@ -1,7 +1,9 @@
+
 import { Module } from "@nestjs/common";
 import { TypeOrmModule } from "@nestjs/typeorm";
 
 import { AuthModule } from "../auth/auth.module";
+
 import { User } from "../users/entities/user.entity";
 import { Match } from "../matches/entities/match.entity";
 import { Category } from "../categories/entities/category.entity";
@@ -16,6 +18,8 @@ import { ReportsController } from "./reports.controller";
 
 import { ReportManagementService } from "./report-management.service";
 import { ReportManagementController } from "./report-management.controller";
+
+import { ReportMatchingWorkflowService } from "./report-matching-workflow.service";
 
 @Module({
   imports: [
@@ -40,11 +44,13 @@ import { ReportManagementController } from "./report-management.controller";
   providers: [
     ReportsService,
     ReportManagementService,
+    ReportMatchingWorkflowService,
   ],
 
   exports: [
     ReportsService,
     ReportManagementService,
+    ReportMatchingWorkflowService,
   ],
 })
 export class ReportsModule {}
