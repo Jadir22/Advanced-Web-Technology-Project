@@ -426,77 +426,11 @@ async function runTests(): Promise<void> {
       "PASS: Paid LOST owner creates conversation.",
     );
 
-    // -----------------------------------------
-    // TEST 8: FOUND owner remains locked
-    // -----------------------------------------
-
-    await assert.rejects(
-      () => service.createConversation(
-        confirmedMatch,
-        foundOwner,
-      ),
-      ForbiddenException,
-    );
-
-    await assert.rejects(
-      () => service.listMessages(
-        conversation.id,
-        foundOwner,
-        {
-          page: 1,
-          limit: 20,
-        },
-      ),
-      ForbiddenException,
-    );
-
-    const unpaidFoundList =
-      await service.listMine(foundOwner);
-
-    assert.equal(
-      unpaidFoundList.length,
-      0,
-    );
-
-    console.log(
-      "PASS: Unpaid FOUND owner cannot access chat.",
-    );
 
     // -----------------------------------------
-    // Simulate FOUND owner's successful payment
+    // TEST 8: FOUND owner gets free chat unlock
+    // after the LOST owner's successful payment
     // -----------------------------------------
-
-    await insertId(
-      `INSERT INTO public.payments
-        (
-          user_id,
-          match_id,
-          amount,
-          currency,
-          provider,
-          status,
-          transaction_id,
-          provider_payment_id,
-          paid_at
-        )
-       VALUES (
-         $1,
-         $2,
-         10.00,
-         'BDT',
-         'MOCK',
-         'SUCCESS',
-         $3,
-         $3,
-         NOW()
-       )
-       RETURNING id`,
-      [
-        foundOwner,
-        confirmedMatch,
-        `mock-chat-${randomUUID()}`,
-      ],
-    );
 
     const foundUnlock =
       await paymentsService.getUnlockStatus(
@@ -509,8 +443,68 @@ async function runTests(): Promise<void> {
       true,
     );
 
+    assert.equal(
+      foundUnlock.paymentStatus,
+      "SUCCESS",
+    );
+
+    // The FOUND owner did not make a payment.
+    assert.equal(
+      foundUnlock.paymentId,
+      null,
+    );
+
+    // FOUND owner can now read the same chat.
+    const foundMessages =
+      await service.listMessages(
+        conversation.id,
+        foundOwner,
+        {
+          page: 1,
+          limit: 20,
+        },
+      );
+
+    assert.equal(
+      foundMessages.total,
+      0,
+    );
+
+    const foundConversations =
+      await service.listMine(foundOwner);
+
+    assert.equal(
+      foundConversations.length,
+      1,
+    );
+
+    assert.equal(
+      foundConversations[0].id,
+      conversation.id,
+    );
+
+    // Ensure no payment record was created
+    // for the FOUND owner.
+    const foundPaymentRows:
+      Array<{ total: string }> =
+        await runner.query(
+          `SELECT COUNT(*)::text AS total
+           FROM public.payments
+           WHERE match_id = $1
+             AND user_id = $2`,
+          [
+            confirmedMatch,
+            foundOwner,
+          ],
+        );
+
+    assert.equal(
+      Number(foundPaymentRows[0].total),
+      0,
+    );
+
     console.log(
-      "PASS: Successful FOUND payment unlocks match.",
+      "PASS: FOUND owner accesses chat without payment.",
     );
 
     // -----------------------------------------

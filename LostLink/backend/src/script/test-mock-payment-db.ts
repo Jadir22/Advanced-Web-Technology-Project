@@ -354,83 +354,80 @@ async function runTests(): Promise<void> {
       "PASS: Paid owner's match unlocked.",
     );
 
-    // Test 12: Other owner still locked.
+
+    // Test 12: FOUND owner is unlocked for free.
     const otherStatus = await service.getUnlockStatus(
       matchId,
       foundOwner,
     );
 
+    assert.equal(otherStatus.unlocked, true);
     assert.equal(
-      otherStatus.unlocked,
-      false,
+      otherStatus.paymentStatus,
+      PaymentStatus.SUCCESS,
     );
+    assert.equal(otherStatus.paymentId, null);
 
     console.log(
-      "PASS: Unlock is per-user.",
+      "PASS: LOST owner payment unlocks FOUND owner.",
     );
 
-    // Test 13: Paid user sees counterpart.
+    // Test 13: LOST owner sees FOUND details.
     const details = await service.getUnlockedDetails(
       matchId,
       lostOwner,
     );
 
-    assert.equal(
-      details.reportId,
-      foundReport,
-    );
-
+    assert.equal(details.reportId, foundReport);
     assert.equal(
       details.description,
       "Private FOUND details",
     );
 
     console.log(
-      "PASS: Paid owner sees protected details.",
+      "PASS: LOST owner sees protected details.",
     );
 
-    // Test 14: Unpaid counterpart blocked.
-    await assert.rejects(
-      () => service.getUnlockedDetails(
-        matchId,
-        foundOwner,
-      ),
-      ForbiddenException,
-    );
-
-    console.log(
-      "PASS: Unpaid counterpart cannot see details.",
-    );
-
-    // Test 15: Second owner pays separately.
-    const otherPayment = await service.initiateMock(
-      matchId,
-      foundOwner,
-    );
-
-    await service.confirmMock(
-      otherPayment.id,
-      foundOwner,
-    );
-
+    // Test 14: FOUND owner sees LOST details
+    // without making a separate payment.
     const otherDetails =
       await service.getUnlockedDetails(
         matchId,
         foundOwner,
       );
 
-    assert.equal(
-      otherDetails.reportId,
-      lostReport,
-    );
-
+    assert.equal(otherDetails.reportId, lostReport);
     assert.equal(
       otherDetails.description,
       "Private LOST details",
     );
 
     console.log(
-      "PASS: Second owner independently unlocked.",
+      "PASS: FOUND owner accesses details for free.",
+    );
+
+    // Test 15: FOUND owner cannot pay.
+    await assert.rejects(
+      () => service.initiateMock(
+        matchId,
+        foundOwner,
+      ),
+      ForbiddenException,
+    );
+
+    const foundHistory = await service.history(
+      foundOwner,
+      {
+        page: 1,
+        limit: 20,
+      },
+    );
+
+    assert.equal(foundHistory.total, 0);
+    assert.equal(foundHistory.payments.length, 0);
+
+    console.log(
+      "PASS: FOUND owner payment blocked; no charge.",
     );
 
     // Test 16: History is private.

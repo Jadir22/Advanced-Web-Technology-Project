@@ -5,28 +5,20 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
-
 import { InjectRepository } from "@nestjs/typeorm";
 import { isUUID } from "class-validator";
-
-import {
-  EntityManager,
-  Repository,
-} from "typeorm";
+import { EntityManager, Repository } from "typeorm";
 
 import { User } from "../users/entities/user.entity";
-import { MatchStatus } from
-  "../matches/entities/match.entity";
-
-import { Match } from
-  "../matches/entities/match.entity";
-
+import {
+  Match,
+  MatchStatus,
+} from "../matches/entities/match.entity";
 import {
   Payment,
   PaymentProvider,
   PaymentStatus,
 } from "./entities/payment.entity";
-
 import { PaymentHistoryQueryDto } from
   "./dto/payment-history-query.dto";
 
@@ -70,9 +62,7 @@ export class PaymentsService {
 
   private requireUuid(id: string): void {
     if (!isUUID(id)) {
-      throw new NotFoundException(
-        "Resource not found",
-      );
+      throw new NotFoundException("Resource not found");
     }
   }
 
@@ -106,8 +96,8 @@ export class PaymentsService {
     }
   }
 
-  // This query is shared by all payment operations.
-  // A row lock serializes payments for one match.
+  // Verify match ownership, account activity
+  // and confirmation status.
   private async verifyMatch(
     manager: EntityManager,
     matchId: string,
@@ -118,53 +108,38 @@ export class PaymentsService {
     this.requireUuid(matchId);
     this.requireUuid(actorId);
 
-    const rows: MatchRow[] =
-      await manager.query(
-        `
-        SELECT
-          m.id,
-          m.status,
-          m.lost_confirmed AS "lostConfirmed",
-          m.found_confirmed AS "foundConfirmed",
-
-          lr.id AS "lostReportId",
-          fr.id AS "foundReportId",
-
-          lr.user_id AS "lostOwnerId",
-          fr.user_id AS "foundOwnerId",
-
-          lu.is_active AS "lostOwnerActive",
-          fu.is_active AS "foundOwnerActive"
-
-        FROM public.matches m
-
-        INNER JOIN public.reports lr
-          ON lr.id = m.lost_report_id
-
-        INNER JOIN public.reports fr
-          ON fr.id = m.found_report_id
-
-        INNER JOIN public.users lu
-          ON lu.id = lr.user_id
-
-        INNER JOIN public.users fu
-          ON fu.id = fr.user_id
-
-        WHERE m.id = $1
-
-        ${lock
-          ? "FOR UPDATE OF m, lr, fr, lu, fu"
-          : ""}
-        `,
-        [matchId],
-      );
+    const rows: MatchRow[] = await manager.query(
+      `
+      SELECT
+        m.id,
+        m.status,
+        m.lost_confirmed AS "lostConfirmed",
+        m.found_confirmed AS "foundConfirmed",
+        lr.id AS "lostReportId",
+        fr.id AS "foundReportId",
+        lr.user_id AS "lostOwnerId",
+        fr.user_id AS "foundOwnerId",
+        lu.is_active AS "lostOwnerActive",
+        fu.is_active AS "foundOwnerActive"
+      FROM public.matches m
+      INNER JOIN public.reports lr
+        ON lr.id = m.lost_report_id
+      INNER JOIN public.reports fr
+        ON fr.id = m.found_report_id
+      INNER JOIN public.users lu
+        ON lu.id = lr.user_id
+      INNER JOIN public.users fu
+        ON fu.id = fr.user_id
+      WHERE m.id = $1
+      ${lock ? "FOR UPDATE OF m, lr, fr, lu, fu" : ""}
+      `,
+      [matchId],
+    );
 
     const match = rows[0];
 
     if (!match) {
-      throw new NotFoundException(
-        "Match not found",
-      );
+      throw new NotFoundException("Match not found");
     }
 
     if (
@@ -185,9 +160,7 @@ export class PaymentsService {
       );
     }
 
-    if (
-      match.lostOwnerId === match.foundOwnerId
-    ) {
+    if (match.lostOwnerId === match.foundOwnerId) {
       throw new ConflictException(
         "Invalid match ownership",
       );
@@ -209,6 +182,18 @@ export class PaymentsService {
     return match;
   }
 
+  // Only the LOST owner can pay the unlock fee.
+  private requireLostOwner(
+    match: MatchRow,
+    actorId: string,
+  ): void {
+    if (match.lostOwnerId !== actorId) {
+      throw new ForbiddenException(
+        "Only the LOST owner can pay the unlock fee",
+      );
+    }
+  }
+
   private paymentResult(
     payment: Payment,
   ): PaymentResult {
@@ -225,15 +210,18 @@ export class PaymentsService {
     };
   }
 
+  // Unlock is match-level, not per-user.
+  // A successful payment by the LOST owner
+  // unlocks access for both participants.
   private async successfulPayment(
     manager: EntityManager,
     matchId: string,
-    actorId: string,
+    lostOwnerId: string,
   ): Promise<Payment | null> {
     return manager.getRepository(Payment).findOne({
       where: {
         match: { id: matchId },
-        user: { id: actorId },
+        user: { id: lostOwnerId },
         status: PaymentStatus.SUCCESS,
         amount: UNLOCK_AMOUNT,
         currency: CURRENCY,
@@ -247,8 +235,7 @@ export class PaymentsService {
     });
   }
 
-  // A MOCK payment can be initiated only in an
-  // explicitly enabled non-production environment.
+  // Only the LOST owner may initiate a payment.
   async initiateMock(
     matchId: string,
     actorId: string,
@@ -257,31 +244,31 @@ export class PaymentsService {
 
     return this.payments.manager.transaction(
       async (manager) => {
-        await this.verifyMatch(
+        const match = await this.verifyMatch(
           manager,
           matchId,
           actorId,
           true,
         );
 
+        this.requireLostOwner(match, actorId);
+
         const repo = manager.getRepository(Payment);
 
-        // Never create another payment if already paid.
         const paid = await this.successfulPayment(
           manager,
           matchId,
-          actorId,
+          match.lostOwnerId,
         );
 
         if (paid) {
           return this.paymentResult(paid);
         }
 
-        // Reuse an existing pending attempt.
         const pending = await repo.findOne({
           where: {
             match: { id: matchId },
-            user: { id: actorId },
+            user: { id: match.lostOwnerId },
             provider: PaymentProvider.MOCK,
             status: PaymentStatus.PENDING,
           },
@@ -298,7 +285,9 @@ export class PaymentsService {
         }
 
         const payment = repo.create({
-          user: { id: actorId } as User,
+          user: {
+            id: match.lostOwnerId,
+          } as User,
           match: { id: matchId } as Match,
           amount: UNLOCK_AMOUNT,
           currency: CURRENCY,
@@ -316,8 +305,8 @@ export class PaymentsService {
     );
   }
 
-  // Explicit local-development simulation.
-  // This endpoint does NOT process real money.
+  // Local/mock payment confirmation.
+  // FOUND owner cannot confirm or create payment.
   async confirmMock(
     paymentId: string,
     actorId: string,
@@ -336,9 +325,7 @@ export class PaymentsService {
     });
 
     if (!initial) {
-      throw new NotFoundException(
-        "Payment not found",
-      );
+      throw new NotFoundException("Payment not found");
     }
 
     if (initial.user.id !== actorId) {
@@ -349,13 +336,14 @@ export class PaymentsService {
 
     return this.payments.manager.transaction(
       async (manager) => {
-        // Lock match before changing payment state.
-        await this.verifyMatch(
+        const match = await this.verifyMatch(
           manager,
           initial.match.id,
           actorId,
           true,
         );
+
+        this.requireLostOwner(match, actorId);
 
         const repo = manager.getRepository(Payment);
 
@@ -374,8 +362,8 @@ export class PaymentsService {
         }
 
         if (
-          payment.user.id !== actorId ||
-          payment.match.id !== initial.match.id
+          payment.user.id !== match.lostOwnerId ||
+          payment.match.id !== match.id
         ) {
           throw new ForbiddenException(
             "Payment ownership mismatch",
@@ -392,7 +380,6 @@ export class PaymentsService {
           );
         }
 
-        // Repeated confirmation is idempotent.
         if (payment.status === PaymentStatus.SUCCESS) {
           return this.paymentResult(payment);
         }
@@ -403,12 +390,10 @@ export class PaymentsService {
           );
         }
 
-        // A user must not unlock twice using
-        // two separate successful attempts.
         const alreadyPaid = await this.successfulPayment(
           manager,
-          initial.match.id,
-          actorId,
+          match.id,
+          match.lostOwnerId,
         );
 
         if (alreadyPaid) {
@@ -419,12 +404,8 @@ export class PaymentsService {
 
         payment.status = PaymentStatus.SUCCESS;
         payment.paidAt = new Date();
-
-        payment.transactionId =
-          `mock_${payment.id}`;
-
-        payment.providerPaymentId =
-          `mock_${payment.id}`;
+        payment.transactionId = `mock_${payment.id}`;
+        payment.providerPaymentId = `mock_${payment.id}`;
 
         const saved = await repo.save(payment);
 
@@ -433,6 +414,9 @@ export class PaymentsService {
     );
   }
 
+  // Both owners see the same match-level
+  // unlock status, but only the payer sees
+  // the payment's ID.
   async getUnlockStatus(
     matchId: string,
     actorId: string,
@@ -448,14 +432,14 @@ export class PaymentsService {
     const paid = await this.successfulPayment(
       this.payments.manager,
       matchId,
-      actorId,
+      match.lostOwnerId,
     );
 
     const latest = paid ??
       await this.payments.findOne({
         where: {
           match: { id: matchId },
-          user: { id: actorId },
+          user: { id: match.lostOwnerId },
         },
         order: {
           createdAt: "DESC",
@@ -473,19 +457,22 @@ export class PaymentsService {
       amount: UNLOCK_AMOUNT,
       currency: CURRENCY,
       unlocked: Boolean(ready && paid),
-      paymentId: latest?.id ?? null,
+      paymentId:
+        actorId === match.lostOwnerId
+          ? (latest?.id ?? null)
+          : null,
       paymentStatus: latest?.status ?? null,
     };
   }
 
-
-  // Reusable by the future Chat integration.
-  // Do not treat JWT alone as chat-unlock permission.
+  // Shared by REST Chat and WebSocket access.
+  // Both confirmed participants become
+  // authorized when the LOST owner has paid.
   async assertUnlocked(
     matchId: string,
     actorId: string,
   ): Promise<void> {
-    await this.verifyMatch(
+    const match = await this.verifyMatch(
       this.payments.manager,
       matchId,
       actorId,
@@ -494,7 +481,7 @@ export class PaymentsService {
     const paid = await this.successfulPayment(
       this.payments.manager,
       matchId,
-      actorId,
+      match.lostOwnerId,
     );
 
     if (!paid) {
@@ -504,8 +491,8 @@ export class PaymentsService {
     }
   }
 
-  // Only return counterpart's protected
-  // report description after successful payment.
+  // Description access is unlocked for both
+  // participants by the LOST owner's payment.
   async getUnlockedDetails(
     matchId: string,
     actorId: string,
@@ -522,7 +509,7 @@ export class PaymentsService {
         const paid = await this.successfulPayment(
           manager,
           matchId,
-          actorId,
+          match.lostOwnerId,
         );
 
         if (!paid) {
@@ -565,6 +552,8 @@ export class PaymentsService {
     );
   }
 
+  // Payment history remains private to
+  // the user who actually made the payment.
   async history(
     actorId: string,
     query: PaymentHistoryQueryDto,
