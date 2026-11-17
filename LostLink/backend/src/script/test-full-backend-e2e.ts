@@ -938,35 +938,45 @@ async function runTests(): Promise<void> {
         "PASS 24: Paid LOST owner sees FOUND details.",
       );
 
+
       // =======================================
-      // 25. FOUND OWNER REMAINS UNPAID
+      // 25. FOUND OWNER UNLOCKED FOR FREE
       // =======================================
 
-      const foundUnlockBefore =
+      const foundUnlock =
         await payments.getUnlockStatus(
           matchId,
           foundOwner,
         );
 
+      assert.equal(foundUnlock.unlocked, true);
       assert.equal(
-        foundUnlockBefore.unlocked,
-        false,
+        foundUnlock.paymentStatus,
+        PaymentStatus.SUCCESS,
       );
+      assert.equal(foundUnlock.paymentId, null);
 
-      await assert.rejects(
-        () => payments.getUnlockedDetails(
+      const lostDetails =
+        await payments.getUnlockedDetails(
           matchId,
           foundOwner,
-        ),
-        ForbiddenException,
+        );
+
+      assert.equal(
+        lostDetails.reportId,
+        lostReport.id,
+      );
+      assert.equal(
+        lostDetails.description,
+        "Private LOST phone details",
       );
 
       console.log(
-        "PASS 25: FOUND owner independently locked.",
+        "PASS 25: FOUND owner unlocked by LOST payment.",
       );
 
       // =======================================
-      // 26. PAID OWNER CREATES CHAT
+      // 26. LOST OWNER CREATES CHAT
       // =======================================
 
       const conversation =
@@ -982,84 +992,74 @@ async function runTests(): Promise<void> {
       );
 
       console.log(
-        "PASS 26: Paid LOST owner creates chat.",
+        "PASS 26: LOST owner creates unlocked chat.",
       );
 
       // =======================================
-      // 27. UNPAID FOUND OWNER CANNOT READ CHAT
+      // 27. FOUND OWNER ACCESSES CHAT FOR FREE
       // =======================================
 
-      await assert.rejects(
-        () => chat.listMessages(
+      const foundMessages =
+        await chat.listMessages(
           conversation.id,
           foundOwner,
           {
             page: 1,
             limit: 20,
           },
+        );
+
+      assert.equal(foundMessages.total, 0);
+
+      const foundConversations =
+        await chat.listMine(foundOwner);
+
+      assert.equal(
+        foundConversations.length,
+        1,
+      );
+
+      assert.equal(
+        foundConversations[0].id,
+        conversation.id,
+      );
+
+      console.log(
+        "PASS 27: FOUND owner reads chat without payment.",
+      );
+
+      // =======================================
+      // 28. FOUND OWNER CANNOT PAY SEPARATELY
+      // =======================================
+
+      await assert.rejects(
+        () => payments.initiateMock(
+          matchId,
+          foundOwner,
         ),
         ForbiddenException,
       );
 
       assert.equal(
-        (await chat.listMine(foundOwner)).length,
+        await count(
+          "payments",
+          "match_id = $1 AND user_id = $2",
+          [matchId, foundOwner],
+        ),
         0,
       );
 
-      console.log(
-        "PASS 27: Unpaid FOUND owner cannot read chat.",
-      );
-
-      // =======================================
-      // 28. FOUND OWNER PAYS SEPARATELY
-      // =======================================
-
-      const secondPayment =
-        await payments.initiateMock(
-          matchId,
-          foundOwner,
-        );
-
-      const paidFound =
-        await payments.confirmMock(
-          secondPayment.id,
-          foundOwner,
-        );
-
       assert.equal(
-        paidFound.status,
-        PaymentStatus.SUCCESS,
-      );
-
-      const foundUnlockAfter =
-        await payments.getUnlockStatus(
-          matchId,
-          foundOwner,
-        );
-
-      assert.equal(
-        foundUnlockAfter.unlocked,
-        true,
-      );
-
-      const lostDetails =
-        await payments.getUnlockedDetails(
-          matchId,
-          foundOwner,
-        );
-
-      assert.equal(
-        lostDetails.reportId,
-        lostReport.id,
-      );
-
-      assert.equal(
-        lostDetails.description,
-        "Private LOST phone details",
+        await count(
+          "payments",
+          "match_id = $1 AND user_id = $2 AND status = 'SUCCESS'",
+          [matchId, lostOwner],
+        ),
+        1,
       );
 
       console.log(
-        "PASS 28: FOUND owner independently unlocked.",
+        "PASS 28: FOUND payment blocked; only LOST paid.",
       );
 
       // =======================================

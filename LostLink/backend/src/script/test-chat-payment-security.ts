@@ -34,6 +34,10 @@ import { ChatGateway } from
 const JWT_SECRET =
   "ab06-chat-security-test-secret-2026";
 
+// ==========================================
+// FAKE SOCKET INTERFACE
+// ==========================================
+
 interface FakeSocket {
   id: string;
 
@@ -50,6 +54,10 @@ interface FakeSocket {
   leave(room: string): Promise<void>;
   disconnect(close?: boolean): void;
 }
+
+// ==========================================
+// CREATE FAKE SOCKET
+// ==========================================
 
 function createSocket(
   id: string,
@@ -80,10 +88,18 @@ function createSocket(
   };
 }
 
+// ==========================================
+// MAIN SECURITY TEST
+// ==========================================
+
 async function runTests(): Promise<void> {
   console.log(
     "Testing AB-06 Chat Payment Security...",
   );
+
+  // ----------------------------------------
+  // TEST IDENTITIES
+  // ----------------------------------------
 
   const lostOwner = randomUUID();
   const foundOwner = randomUUID();
@@ -110,8 +126,22 @@ async function runTests(): Promise<void> {
     });
   }
 
-  // Simulates independently unlocked accounts.
-  const unlockedUsers = new Set<string>();
+  // ========================================
+  // OWNER-ONLY PAYMENT BUSINESS MODEL
+  // ========================================
+
+  // Only the LOST owner pays.
+  // One successful payment unlocks the
+  // entire confirmed match for both users.
+  //
+  // FOUND owner never makes a separate
+  // payment to obtain chat access.
+
+  let lostOwnerPaid = false;
+
+  // ----------------------------------------
+  // FAKE USER REPOSITORY
+  // ----------------------------------------
 
   const userRepository = {
     async findOne(options: {
@@ -126,12 +156,16 @@ async function runTests(): Promise<void> {
     },
   };
 
-  // This fake service models the existing
-  // ChatService's authorization contract.
+  // ========================================
+  // MATCH-LEVEL CHAT AUTHORIZATION
+  // ========================================
+
   async function checkAccess(
     id: string,
     actorId: string,
   ) {
+    // Conversation must exist.
+
     if (
       id !== conversationId &&
       id !== pendingConversation
@@ -140,6 +174,8 @@ async function runTests(): Promise<void> {
         "Conversation not found",
       );
     }
+
+    // Only matched users have access.
 
     if (
       actorId !== lostOwner &&
@@ -150,11 +186,15 @@ async function runTests(): Promise<void> {
       );
     }
 
+    // Both sides must confirm first.
+
     if (id === pendingConversation) {
       throw new ConflictException(
         "Match is not confirmed",
       );
     }
+
+    // Both accounts must be active.
 
     const lost = users.get(lostOwner);
     const found = users.get(foundOwner);
@@ -168,14 +208,22 @@ async function runTests(): Promise<void> {
       );
     }
 
-    if (!unlockedUsers.has(actorId)) {
+    // IMPORTANT:
+    // Check the LOST owner's match payment,
+    // not the requesting user's payment.
+
+    if (!lostOwnerPaid) {
       throw new ForbiddenException(
-        "Payment required",
+        "LOST owner payment required",
       );
     }
 
     return { id };
   }
+
+  // ========================================
+  // FAKE CHAT SERVICE
+  // ========================================
 
   const savedMessages: ChatMessageResult[] = [];
 
@@ -203,6 +251,10 @@ async function runTests(): Promise<void> {
     },
   };
 
+  // ========================================
+  // JWT AND CHAT GATEWAY
+  // ========================================
+
   const jwt = new JwtService({
     secret: JWT_SECRET,
   });
@@ -217,6 +269,10 @@ async function runTests(): Promise<void> {
     jwt.sign({
       sub: id,
     });
+
+  // ----------------------------------------
+  // CONNECTED CLIENTS
+  // ----------------------------------------
 
   const alice = createSocket(
     "socket-lost-owner",
@@ -239,13 +295,20 @@ async function runTests(): Promise<void> {
     stranger,
   ];
 
+  // ----------------------------------------
+  // TRACK SOCKET MESSAGE DELIVERY
+  // ----------------------------------------
+
   const deliveries: Array<{
     socketId: string;
     event: string;
     message: ChatMessageResult;
   }> = [];
 
-  // Fake Socket.IO room delivery.
+  // ========================================
+  // FAKE SOCKET.IO NAMESPACE
+  // ========================================
+
   const namespace = {
     in(room: string) {
       return {
@@ -285,7 +348,10 @@ async function runTests(): Promise<void> {
 
   const room = `chat:${conversationId}`;
 
-  // TEST 1: Missing JWT
+  // ========================================
+  // TEST 1: MISSING JWT
+  // ========================================
+
   const missingToken = createSocket(
     "missing-token",
   );
@@ -303,7 +369,10 @@ async function runTests(): Promise<void> {
     "PASS 1: Missing JWT disconnected.",
   );
 
-  // TEST 2: Invalid JWT
+  // ========================================
+  // TEST 2: INVALID JWT
+  // ========================================
+
   const invalidToken = createSocket(
     "invalid-token",
     "invalid.jwt.token",
@@ -322,7 +391,10 @@ async function runTests(): Promise<void> {
     "PASS 2: Invalid JWT disconnected.",
   );
 
-  // TEST 3: Inactive user
+  // ========================================
+  // TEST 3: INACTIVE USER
+  // ========================================
+
   const inactive = createSocket(
     "inactive-user",
     token(inactiveOwner),
@@ -341,7 +413,10 @@ async function runTests(): Promise<void> {
     "PASS 3: Inactive JWT user blocked.",
   );
 
-  // TEST 4: Valid JWT accepted
+  // ========================================
+  // TEST 4: VALID JWT
+  // ========================================
+
   await gateway.handleConnection(
     alice as unknown as Socket,
   );
@@ -350,14 +425,24 @@ async function runTests(): Promise<void> {
     bob as unknown as Socket,
   );
 
-  assert.equal(alice.disconnected, false);
-  assert.equal(bob.disconnected, false);
+  assert.equal(
+    alice.disconnected,
+    false,
+  );
+
+  assert.equal(
+    bob.disconnected,
+    false,
+  );
 
   console.log(
     "PASS 4: Valid owner JWT accepted.",
   );
 
-  // TEST 5: Unpaid LOST owner cannot join
+  // ========================================
+  // TEST 5: UNPAID LOST OWNER BLOCKED
+  // ========================================
+
   await assert.rejects(
     () => gateway.join(
       alice as unknown as Socket,
@@ -366,13 +451,19 @@ async function runTests(): Promise<void> {
     WsException,
   );
 
-  assert.equal(alice.rooms.has(room), false);
+  assert.equal(
+    alice.rooms.has(room),
+    false,
+  );
 
   console.log(
     "PASS 5: Unpaid LOST owner blocked.",
   );
 
-  // TEST 6: Unpaid FOUND owner cannot join
+  // ========================================
+  // TEST 6: UNPAID FOUND OWNER BLOCKED
+  // ========================================
+
   await assert.rejects(
     () => gateway.join(
       bob as unknown as Socket,
@@ -381,11 +472,19 @@ async function runTests(): Promise<void> {
     WsException,
   );
 
-  console.log(
-    "PASS 6: Unpaid FOUND owner blocked.",
+  assert.equal(
+    bob.rooms.has(room),
+    false,
   );
 
-  // TEST 7: Outsider always blocked
+  console.log(
+    "PASS 6: Unpaid match blocks FOUND owner.",
+  );
+
+  // ========================================
+  // TEST 7: OUTSIDER BLOCKED
+  // ========================================
+
   await assert.rejects(
     () => gateway.join(
       stranger as unknown as Socket,
@@ -398,8 +497,14 @@ async function runTests(): Promise<void> {
     "PASS 7: Outsider room access blocked.",
   );
 
-  // TEST 8: Pending match never joins
-  unlockedUsers.add(lostOwner);
+  // ========================================
+  // TEST 8: PENDING MATCH BLOCKED
+  // ========================================
+
+  // Simulate successful payment by
+  // the LOST owner only.
+
+  lostOwnerPaid = true;
 
   await assert.rejects(
     () => gateway.join(
@@ -415,65 +520,105 @@ async function runTests(): Promise<void> {
     "PASS 8: Pending match room denied.",
   );
 
-  // TEST 9: Paid LOST owner joins
+  // ========================================
+  // TEST 9: LOST OWNER JOINS
+  // ========================================
+
   const aliceJoin = await gateway.join(
     alice as unknown as Socket,
     { conversationId },
   );
 
-  assert.equal(aliceJoin.joined, true);
-  assert.equal(alice.rooms.has(room), true);
+  assert.equal(
+    aliceJoin.joined,
+    true,
+  );
+
+  assert.equal(
+    alice.rooms.has(room),
+    true,
+  );
 
   console.log(
     "PASS 9: Paid LOST owner joined.",
   );
 
-  // TEST 10: Unpaid FOUND owner still blocked
-  await assert.rejects(
-    () => gateway.join(
-      bob as unknown as Socket,
-      { conversationId },
-    ),
-    WsException,
+  // ========================================
+  // TEST 10: FOUND OWNER FREE UNLOCK
+  // ========================================
+
+  // FOUND owner has not paid.
+  // The LOST owner's successful payment
+  // authorizes both match participants.
+
+  await checkAccess(
+    conversationId,
+    foundOwner,
+  );
+
+  // Authorization does not automatically
+  // join the user to a Socket.IO room.
+
+  assert.equal(
+    bob.rooms.has(room),
+    false,
   );
 
   console.log(
-    "PASS 10: Unlock is per-user.",
+    "PASS 10: FOUND owner authorized without payment.",
   );
 
-  // TEST 11: Sending before joining denied
+  // ========================================
+  // TEST 11: SEND BEFORE JOIN BLOCKED
+  // ========================================
+
   await assert.rejects(
     () => gateway.send(
       bob as unknown as Socket,
       {
         conversationId,
-        content: "Not allowed",
+        content: "Not allowed before joining",
       },
     ),
     WsException,
   );
 
-  assert.equal(savedMessages.length, 0);
+  assert.equal(
+    savedMessages.length,
+    0,
+  );
 
   console.log(
     "PASS 11: Sending without room access denied.",
   );
 
-  // TEST 12: FOUND owner unlocks separately
-  unlockedUsers.add(foundOwner);
+  // ========================================
+  // TEST 12: FOUND OWNER JOINS FOR FREE
+  // ========================================
 
   const bobJoin = await gateway.join(
     bob as unknown as Socket,
     { conversationId },
   );
 
-  assert.equal(bobJoin.joined, true);
-
-  console.log(
-    "PASS 12: FOUND owner independently unlocked.",
+  assert.equal(
+    bobJoin.joined,
+    true,
   );
 
-  // TEST 13: Both owners receive private message
+  assert.equal(
+    bob.rooms.has(room),
+    true,
+  );
+
+  console.log(
+    "PASS 12: FOUND owner joined without payment.",
+  );
+
+  // ========================================
+  // TEST 13: BOTH RECEIVE PRIVATE MESSAGE
+  // ========================================
+
   const first = await gateway.send(
     alice as unknown as Socket,
     {
@@ -482,9 +627,27 @@ async function runTests(): Promise<void> {
     },
   );
 
-  assert.equal(first.saved, true);
-  assert.equal(savedMessages.length, 1);
-  assert.equal(deliveries.length, 2);
+  assert.equal(
+    first.saved,
+    true,
+  );
+
+  assert.equal(
+    savedMessages.length,
+    1,
+  );
+
+  assert.equal(
+    deliveries.length,
+    2,
+  );
+
+  assert.ok(
+    deliveries.some(
+      (delivery) =>
+        delivery.socketId === alice.id,
+    ),
+  );
 
   assert.ok(
     deliveries.some(
@@ -504,7 +667,10 @@ async function runTests(): Promise<void> {
     "PASS 13: Private message delivered to owners.",
   );
 
-  // TEST 14: Empty and oversized messages blocked
+  // ========================================
+  // TEST 14: INVALID MESSAGE CONTENT
+  // ========================================
+
   await assert.rejects(
     () => gateway.send(
       alice as unknown as Socket,
@@ -527,41 +693,67 @@ async function runTests(): Promise<void> {
     WsException,
   );
 
-  assert.equal(savedMessages.length, 1);
+  assert.equal(
+    savedMessages.length,
+    1,
+  );
 
   console.log(
     "PASS 14: Invalid message content blocked.",
   );
 
-  // TEST 15: Losing payment access removes
-  // an already joined receiver before delivery
-  unlockedUsers.delete(foundOwner);
+  // ========================================
+  // TEST 15: MATCH ACCESS REVOCATION
+  // ========================================
 
-  const beforeRevocation = deliveries.length;
+  // Simulate match-level unlock revocation.
+  // This is a mock security scenario,
+  // not a real refund/revocation API.
 
-  await gateway.send(
-    alice as unknown as Socket,
-    {
-      conversationId,
-      content: "After FOUND unlock revoked",
-    },
+  lostOwnerPaid = false;
+
+  const beforeRevocation =
+    deliveries.length;
+
+  // Revalidate an existing saved message.
+  // The gateway must remove both users
+  // from the room before broadcasting.
+
+  await gateway.broadcastMessage(
+    savedMessages[0],
   );
 
-  const afterRevocation =
-    deliveries.slice(beforeRevocation);
-
-  assert.equal(bob.rooms.has(room), false);
-  assert.equal(afterRevocation.length, 1);
   assert.equal(
-    afterRevocation[0].socketId,
-    alice.id,
+    alice.rooms.has(room),
+    false,
+  );
+
+  assert.equal(
+    bob.rooms.has(room),
+    false,
+  );
+
+  assert.equal(
+    deliveries.length,
+    beforeRevocation,
   );
 
   console.log(
-    "PASS 15: Revoked receiver removed before delivery.",
+    "PASS 15: Match revocation removes both receivers.",
   );
 
-  // TEST 16: Revoked user cannot rejoin
+  // ========================================
+  // TEST 16: REVOKED MATCH CANNOT REJOIN
+  // ========================================
+
+  await assert.rejects(
+    () => gateway.join(
+      alice as unknown as Socket,
+      { conversationId },
+    ),
+    WsException,
+  );
+
   await assert.rejects(
     () => gateway.join(
       bob as unknown as Socket,
@@ -571,32 +763,55 @@ async function runTests(): Promise<void> {
   );
 
   console.log(
-    "PASS 16: Revoked user cannot rejoin.",
+    "PASS 16: Revoked match blocks both owners.",
   );
 
-  // TEST 17: Re-allow FOUND owner for JWT test
-  unlockedUsers.add(foundOwner);
+  // ========================================
+  // TEST 17: RESTORE MATCH ACCESS
+  // ========================================
 
-  bob.handshake.auth.token = token(foundOwner);
+  // Simulate successful match unlock again.
+
+  lostOwnerPaid = true;
+
+  bob.handshake.auth.token =
+    token(foundOwner);
+
+  await gateway.join(
+    alice as unknown as Socket,
+    { conversationId },
+  );
 
   await gateway.join(
     bob as unknown as Socket,
     { conversationId },
   );
 
-  assert.equal(bob.rooms.has(room), true);
-
-  console.log(
-    "PASS 17: Authorized owner can rejoin.",
+  assert.equal(
+    alice.rooms.has(room),
+    true,
   );
 
-  // TEST 18: Expired JWT receiver removed
+  assert.equal(
+    bob.rooms.has(room),
+    true,
+  );
+
+  console.log(
+    "PASS 17: Both owners rejoin after access restoration.",
+  );
+
+  // ========================================
+  // TEST 18: EXPIRED JWT RECEIVER
+  // ========================================
+
   bob.handshake.auth.token = jwt.sign({
     sub: foundOwner,
     exp: Math.floor(Date.now() / 1000) - 60,
   });
 
-  const beforeExpiry = deliveries.length;
+  const beforeExpiry =
+    deliveries.length;
 
   await gateway.send(
     alice as unknown as Socket,
@@ -609,8 +824,16 @@ async function runTests(): Promise<void> {
   const afterExpiry =
     deliveries.slice(beforeExpiry);
 
-  assert.equal(bob.rooms.has(room), false);
-  assert.equal(afterExpiry.length, 1);
+  assert.equal(
+    bob.rooms.has(room),
+    false,
+  );
+
+  assert.equal(
+    afterExpiry.length,
+    1,
+  );
+
   assert.equal(
     afterExpiry[0].socketId,
     alice.id,
@@ -620,10 +843,15 @@ async function runTests(): Promise<void> {
     "PASS 18: Expired receiver JWT blocks delivery.",
   );
 
-  // TEST 19: Deactivated sender cannot send
-  const lostUser = users.get(lostOwner);
+  // ========================================
+  // TEST 19: DEACTIVATED SENDER
+  // ========================================
+
+  const lostUser =
+    users.get(lostOwner);
 
   assert.ok(lostUser);
+
   lostUser.isActive = false;
 
   await assert.rejects(
@@ -637,13 +865,22 @@ async function runTests(): Promise<void> {
     WsException,
   );
 
-  assert.equal(savedMessages.length, 3);
+  // Only two valid messages were saved.
+  // No message was saved during revocation.
+
+  assert.equal(
+    savedMessages.length,
+    2,
+  );
 
   console.log(
     "PASS 19: Deactivated sender blocked.",
   );
 
-  // TEST 20: No outsider delivery
+  // ========================================
+  // TEST 20: OUTSIDER RECEIVES NOTHING
+  // ========================================
+
   assert.ok(
     deliveries.every(
       (delivery) =>
@@ -654,6 +891,10 @@ async function runTests(): Promise<void> {
   console.log(
     "PASS 20: Outsider received no messages.",
   );
+
+  // ========================================
+  // FINAL RESULT
+  // ========================================
 
   console.log(
     "ALL AB-06 CHAT PAYMENT SECURITY TESTS PASSED.",
